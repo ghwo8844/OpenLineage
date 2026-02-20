@@ -36,7 +36,7 @@ import org.apache.spark.sql.hive.execution.CreateHiveTableAsSelectCommand;
 public class ColumnLevelLineageUtils {
 
   private static final String CREATE_HIVE_TABLE_AS_SELECT_COMMAND =
-      "org.apache.spark.sql.hive.execution.CreateHiveTableAsSelectCommand";
+      "org.apache.spark.sql.execution.command.CreateHiveTableAsSelectCommand";
 
   public static Optional<OpenLineage.ColumnLineageDatasetFacet> buildColumnLineageDatasetFacet(
       SparkListenerEvent event,
@@ -56,10 +56,14 @@ public class ColumnLevelLineageUtils {
             new ColumnLevelLineageBuilder(schemaFacet, olContext),
             new DatasetNamespaceCombinedResolver(olContext.getOpenLineageConfig()));
 
-    LogicalPlan plan = getAdjustedPlan(olContext);
+    LogicalPlan adjustedPlan = getAdjustedPlan(olContext);
+    OutputFieldsCollector.collect(context, adjustedPlan);
 
-    OutputFieldsCollector.collect(context, plan);
-    collectInputsAndExpressionDependencies(context, plan);
+    LogicalPlan fullPlan = olContext.getLogicalPlan();
+    if (fullPlan == null) {
+      fullPlan = adjustedPlan;
+    }
+    collectInputsAndExpressionDependencies(context, adjustedPlan, fullPlan);
 
     OpenLineage.ColumnLineageDatasetFacetBuilder facetBuilder =
         olContext.getOpenLineage().newColumnLineageDatasetFacetBuilder();
@@ -123,20 +127,20 @@ public class ColumnLevelLineageUtils {
   }
 
   static void collectInputsAndExpressionDependencies(
-      ColumnLevelLineageContext context, LogicalPlan plan) {
-    ExpressionDependencyCollector.collect(context, plan);
-    InputFieldsCollector.collect(context, plan);
+      ColumnLevelLineageContext context, LogicalPlan optimizedPlan, LogicalPlan fullPlan) {
+    ExpressionDependencyCollector.collect(context, optimizedPlan);
+    InputFieldsCollector.collect(context, fullPlan);
 
     // iterate children plans and see if they contain dataset caching
-    if (plan.children() != null) {
-      plan.foreach(
+    if (optimizedPlan.children() != null) {
+      optimizedPlan.foreach(
           node -> {
             if (node instanceof InMemoryRelation) {
               PlanUtils3.getLogicalPlanOf(context.getOlContext(), (InMemoryRelation) node)
                   .ifPresent(
                       cachedPlan -> {
                         // run self for the cached plan
-                        collectInputsAndExpressionDependencies(context, cachedPlan);
+                        collectInputsAndExpressionDependencies(context, cachedPlan, fullPlan);
 
                         // map outputs of cachedPlan onto inputs of InMemoryRelation
                         Map<String, ExprId> idMap =

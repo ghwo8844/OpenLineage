@@ -115,6 +115,14 @@ public class ExpressionTraverser {
         this.builder);
   }
 
+  public ExpressionTraverser copyOverrideTransform(Expression expression, TransformationInfo transformationInfo) {
+    return ExpressionTraverser.of(
+        expression,
+        this.outputExpressionId,
+        transformationInfo,
+        this.builder);
+  }
+
   public void traverse() {
     if (isLeafNode()) {
       AttributeReference attRef = (AttributeReference) expression;

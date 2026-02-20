@@ -257,8 +257,8 @@ public class TransformationInfo {
 
   /**
    * Merges current {@link TransformationInfo} with another e.g. given two dependencies with
-   * transformation types a -> b, t1 and b -> c, t2 the result of merge is transformation type for
-   * dependency a -> c
+   * transformation types a - b, t1 and b - c, t2 the result of merge is transformation type for
+   * dependency a - c
    *
    * <pre> Rules applied here are:
    * 1. if current transformation is indirect, new type and subtype is taken from current

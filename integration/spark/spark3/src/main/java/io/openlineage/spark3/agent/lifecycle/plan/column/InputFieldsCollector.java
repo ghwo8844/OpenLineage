@@ -5,7 +5,6 @@
 
 package io.openlineage.spark3.agent.lifecycle.plan.column;
 
-import com.google.cloud.spark.bigquery.BigQueryRelation;
 import io.openlineage.client.utils.DatasetIdentifier;
 import io.openlineage.client.utils.jdbc.JdbcDatasetUtils;
 import io.openlineage.spark.agent.lifecycle.plan.column.ColumnLevelLineageBuilder;
@@ -36,6 +35,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LocalRelation;
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
 import org.apache.spark.sql.catalyst.plans.logical.OneRowRelation;
 import org.apache.spark.sql.catalyst.plans.logical.UnaryNode;
+import org.apache.spark.sql.catalyst.plans.logical.View;
 import org.apache.spark.sql.execution.ExternalRDD;
 import org.apache.spark.sql.execution.LogicalRDD;
 import org.apache.spark.sql.execution.columnar.InMemoryRelation;
@@ -117,7 +117,12 @@ public class InputFieldsCollector {
                   .filter(attr -> attr instanceof AttributeReference)
                   .map(attr -> (AttributeReference) attr)
                   .collect(Collectors.toList())
-                  .forEach(attr -> builder.addInput(attr.exprId(), di, attr.name()));
+                  .forEach(attr -> builder.addInput(
+                      attr.exprId(), 
+                      di, 
+                      attr.name(), 
+                      attr.dataType().typeName()  // Use same approach as schema facet
+                  ));
             });
   }
 
@@ -137,11 +142,6 @@ public class InputFieldsCollector {
       HadoopFsRelation relation = (HadoopFsRelation) ((LogicalRelation) node).relation();
       return extractDatasetIdentifier(relation);
     } else if (node instanceof LogicalRelation
-        && BigQueryUtils.hasBigQueryClasses()
-        && ((LogicalRelation) node).relation() instanceof BigQueryRelation) {
-      BigQueryRelation relation = (BigQueryRelation) ((LogicalRelation) node).relation();
-      return BigQueryUtils.extractDatasetIdentifier(relation);
-    } else if (node instanceof LogicalRelation
         && ((LogicalRelation) node).relation() instanceof JDBCRelation) {
       JDBCRelation relation = (JDBCRelation) ((LogicalRelation) node).relation();
       return extractDatasetIdentifier(context, relation);
@@ -151,6 +151,8 @@ public class InputFieldsCollector {
             .getSparkExtensionVisitorWrapper()
             .isDefinedAt(((LogicalRelation) node).relation())) {
       return extractExtensionDatasetIdentifier(context, (LogicalRelation) node);
+    } else if (node instanceof View) {
+      return extractDatasetIdentifier((View) node);
     } else if (node instanceof InMemoryRelation) {
       // implemented in
       // io.openlineage.spark3.agent.lifecycle.plan.column.ColumnLevelLineageUtils.collectInputsAndExpressionDependencies
@@ -226,6 +228,23 @@ public class InputFieldsCollector {
     }
 
     return inputDatasets;
+  }
+
+  private static List<DatasetIdentifier> extractDatasetIdentifier(View view) {
+    try {
+        // Use reflection to access V2ViewDesc which is only available in Netflix Spark
+        Object v2ViewDesc = view.getClass().getMethod("desc").invoke(view);
+        Object identifier = v2ViewDesc.getClass().getMethod("identifier").invoke(v2ViewDesc);
+        if (identifier != null && identifier instanceof String) {
+            return Collections.singletonList(
+                new DatasetIdentifier((String) identifier, "View"));
+        } else {
+            return Collections.emptyList();
+        }
+    } catch (Exception e) {
+        log.warn("Could not extract dataset identifier from View", e);
+        return Collections.emptyList();
+    }
   }
 
   private static List<DatasetIdentifier> extractExtensionDatasetIdentifier(

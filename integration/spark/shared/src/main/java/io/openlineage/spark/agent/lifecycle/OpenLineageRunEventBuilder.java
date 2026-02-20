@@ -23,6 +23,9 @@ import io.openlineage.client.OpenLineage.RunEvent.EventType;
 import io.openlineage.client.OpenLineage.RunFacet;
 import io.openlineage.client.OpenLineage.RunFacets;
 import io.openlineage.client.OpenLineage.RunFacetsBuilder;
+import io.openlineage.client.OpenLineage.SymlinksDatasetFacet;
+import io.openlineage.client.utils.DatasetIdentifier;
+import io.openlineage.client.utils.DatasetIdentifier.Symlink;
 import io.openlineage.spark.agent.lifecycle.plan.column.ColumnLevelLineageUtils;
 import io.openlineage.spark.agent.lifecycle.plan.column.ColumnLevelLineageVisitor;
 import io.openlineage.spark.agent.util.DatasetReducerUtils;
@@ -34,6 +37,7 @@ import io.openlineage.spark.api.CustomFacetBuilder;
 import io.openlineage.spark.api.OpenLineageContext;
 import io.openlineage.spark.api.OpenLineageEventHandlerFactory;
 import io.openlineage.spark.api.QueryPlanVisitor;
+
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -53,7 +57,13 @@ import org.apache.spark.scheduler.SparkListenerEvent;
 import org.apache.spark.scheduler.SparkListenerJobStart;
 import org.apache.spark.scheduler.SparkListenerStageCompleted;
 import org.apache.spark.scheduler.Stage;
+import org.apache.spark.sql.catalyst.expressions.Attribute;
+import org.apache.spark.sql.catalyst.plans.logical.DeserializeToObject;
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
+import org.apache.spark.sql.types.Metadata;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
+
 import scala.Function1;
 import scala.PartialFunction;
 
@@ -295,6 +305,10 @@ class OpenLineageRunEventBuilder {
                                     .map(((Class<InputDataset>) InputDataset.class)::cast))
                         .orElse(Stream.empty()))
                 .collect(Collectors.toList()));
+
+    // add project analysis dataset for column usage
+    datasets = addProjectionAnalysisDataset(datasets, nodes);
+
     OpenLineage openLineage = openLineageContext.getOpenLineage();
     openLineageContext.getVisitedNodes().clearVisitedNodes();
     if (!datasets.isEmpty()) {
@@ -404,8 +418,8 @@ class OpenLineageRunEventBuilder {
                     .ifPresent(facet -> dsFacetsMap.put("columnLineage", facet));
                 return openLineage
                     .newOutputDatasetBuilder()
-                    .name(ds.getName())
-                    .namespace(ds.getNamespace())
+                    .name(getTableName(ds))
+                    .namespace(getTableNamespace(ds))
                     .outputFacets(
                         mergeFacets(
                             outputFacetsMap, ds.getOutputFacets(), OutputDatasetOutputFacets.class))
@@ -509,5 +523,156 @@ class OpenLineageRunEventBuilder {
   public RunFacets buildRunFacets(SparkListenerEvent event, RunFacetsBuilder builder) {
     runFacetBuilders.forEach(customFacetBuilder -> customFacetBuilder.accept(event, builder::put));
     return builder.build();
+  }
+
+  /**
+   * Adds a synthetic InputDataset representing the query's top-level projection analysis.
+   * This dataset contains the projected schema and column lineage information.
+   */
+  private List<InputDataset> addProjectionAnalysisDataset(List<InputDataset> datasets, List<Object> nodes) {
+    if (!openLineageContext.hasOptimizedPlan()) {
+      log.debug("No optimized plan available, skipping projection analysis");
+      return datasets;
+    }
+
+    try {
+      LogicalPlan optimizedPlan = openLineageContext.getOptimizedPlan();
+            
+      // Extract projected columns from the optimized plan
+      List<Attribute> projectedColumns = ScalaConversionUtils.fromSeq(optimizedPlan.output());
+      if (optimizedPlan instanceof DeserializeToObject) {
+        projectedColumns = ScalaConversionUtils.fromSeq(
+          ((DeserializeToObject) optimizedPlan).child().output());
+      }
+    
+      if (projectedColumns.isEmpty()) {
+        log.debug("No projected columns found, skipping projection analysis");
+        return datasets;
+      }
+    
+      log.debug("Analyzing projection with {} columns: {}", 
+        projectedColumns.size(),
+        projectedColumns.stream().map(Attribute::name).collect(Collectors.joining(", ")));
+    
+      // Create projection analysis dataset
+      Optional<InputDataset> projectionDataset = createProjectionAnalysisDataset(
+        optimizedPlan, projectedColumns, nodes);
+    
+      if (projectionDataset.isPresent()) {
+        datasets.add(projectionDataset.get());
+        
+        log.debug("Added projection analysis dataset '{}' with {} projected columns",
+            projectionDataset.get().getName(), projectedColumns.size());
+        return datasets;
+      } else {
+        log.debug("Failed to create projection analysis dataset");
+        return datasets;
+      }
+    } catch (Exception e) {
+      log.warn("Error creating projection analysis dataset: {}", e.getMessage(), e);
+      return datasets;
+    }
+  }
+
+  /**
+   * Creates a synthetic InputDataset representing the query projection analysis.
+   * Leverages existing ColumnLevelLineageUtils and builder patterns.
+   */
+  private Optional<InputDataset> createProjectionAnalysisDataset(
+      LogicalPlan optimizedPlan,
+      List<Attribute> projectedColumns,
+      List<Object> nodes) {
+    
+    try {
+      // Create schema from projected columns
+      StructType projectedSchema = createSchemaFromAttributes(projectedColumns);
+      OpenLineage.SchemaDatasetFacet schemaFacet = 
+          PlanUtils.schemaFacet(openLineageContext.getOpenLineage(), projectedSchema);
+      
+      // Use existing column lineage infrastructure
+      SparkListenerEvent event = nodes.stream()
+          .filter(e -> e instanceof SparkListenerEvent)
+          .map(e -> (SparkListenerEvent) e)
+          .findFirst()
+          .orElse(null);
+      
+      OpenLineage openLineage = openLineageContext.getOpenLineage();
+      
+      // Build dataset facets using builder pattern
+      OpenLineage.DatasetFacetsBuilder facetsBuilder = openLineage.newDatasetFacetsBuilder()
+          .schema(schemaFacet);
+      
+      // Add column lineage facet if available
+      if (event != null) {
+        ColumnLevelLineageUtils.buildColumnLineageDatasetFacet(
+            event, openLineageContext, schemaFacet)
+            .ifPresent(columnLineageFacet -> 
+                facetsBuilder.columnLineage(columnLineageFacet));
+      }
+      
+      // Build the synthetic dataset using builder pattern
+      InputDataset projectionDataset = openLineage
+          .newInputDatasetBuilder()
+          .name("projection-analysis")
+          .namespace("projection-analysis")
+          .facets(facetsBuilder.build())
+          .build();
+      
+      return Optional.of(projectionDataset);
+      
+    } catch (Exception e) {
+      log.warn("Failed to create projection analysis dataset: {}", e.getMessage(), e);
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Creates a schema from Spark Attributes.
+   */
+  private StructType createSchemaFromAttributes(List<Attribute> attributes) {
+    return new StructType(
+        attributes.stream()
+            .map(a -> new StructField(a.name(), a.dataType(), a.nullable(), a.metadata()))
+            .toArray(StructField[]::new));
+  }
+
+  /**
+   * Retrieves the table name from a DatasetIdentifier, considering symlinks.
+   */
+  private String getTableName(OutputDataset ds) {
+    DatasetFacets facets = ds.getFacets();
+    if (facets == null || facets.getSymlinks() == null) {
+      return ds.getName();
+    }
+    SymlinksDatasetFacet symlinksFacet = facets.getSymlinks();
+    if (symlinksFacet == null || symlinksFacet.getIdentifiers() == null) {
+      return ds.getName();
+    }
+    for (OpenLineage.SymlinksDatasetFacetIdentifiers symlink : symlinksFacet.getIdentifiers()) {
+      if ("TABLE".equals(symlink.getType())) {
+        return symlink.getName();
+      }
+    }
+    return ds.getName();
+  }
+
+  /**
+   * Retrieves the table namespace from a DatasetIdentifier, considering symlinks.
+   */
+  private String getTableNamespace(OutputDataset ds) {
+    DatasetFacets facets = ds.getFacets();
+    if (facets == null || facets.getSymlinks() == null) {
+      return ds.getNamespace();
+    }
+    SymlinksDatasetFacet symlinksFacet = facets.getSymlinks();
+    if (symlinksFacet == null || symlinksFacet.getIdentifiers() == null) {
+      return ds.getNamespace();
+    }
+    for (OpenLineage.SymlinksDatasetFacetIdentifiers symlink : symlinksFacet.getIdentifiers()) {
+      if ("TABLE".equals(symlink.getType())) {
+        return symlink.getNamespace();
+      }
+    }
+    return ds.getNamespace();
   }
 }

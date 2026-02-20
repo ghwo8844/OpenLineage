@@ -6,6 +6,7 @@
 package io.openlineage.spark.agent.lifecycle;
 
 import com.google.common.collect.ImmutableList;
+import com.netflix.spark.openlineage.NetflixIcebergHandler;
 import io.openlineage.spark.agent.lifecycle.plan.catalog.CatalogHandler;
 import io.openlineage.spark.api.OpenLineageContext;
 import io.openlineage.spark3.agent.lifecycle.plan.catalog.ClickHouseHandler;
@@ -23,6 +24,8 @@ final class DefaultCatalogHandlers {
 
   static List<CatalogHandler> list(OpenLineageContext context) {
     return ImmutableList.of(
+        // register our custom netflix handler that works with NetflixSparkCatalog
+        new NetflixIcebergHandler(context),
         new IcebergHandler(context),
         new DeltaHandler(context),
         new ClickHouseHandler(context),

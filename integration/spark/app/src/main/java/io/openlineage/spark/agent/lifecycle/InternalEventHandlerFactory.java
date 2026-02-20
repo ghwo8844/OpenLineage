@@ -15,6 +15,7 @@ import io.openlineage.client.OpenLineage.OutputDataset;
 import io.openlineage.client.OpenLineage.OutputDatasetFacet;
 import io.openlineage.client.OpenLineage.RunFacet;
 import io.openlineage.spark.agent.facets.builder.*;
+import io.openlineage.spark.agent.facets.builder.SparkSQLExecutionDetailsFacetBuilder;
 import io.openlineage.spark.agent.lifecycle.plan.column.ColumnLevelLineageVisitor;
 import io.openlineage.spark.api.CustomFacetBuilder;
 import io.openlineage.spark.api.OpenLineageContext;
@@ -199,6 +200,7 @@ class InternalEventHandlerFactory implements OpenLineageEventHandlerFactory {
                 new SparkProcessingEngineRunFacetBuilder(context),
                 new SparkApplicationDetailsFacetBuilder(context),
                 new SparkJobDetailsFacetBuilder(),
+                new SparkSQLExecutionDetailsFacetBuilder(),
                 new TagsRunFacetBuilder(context));
     if (DatabricksEnvironmentFacetBuilder.isDatabricksRuntime()) {
       listBuilder.add(new DatabricksEnvironmentFacetBuilder(context));
