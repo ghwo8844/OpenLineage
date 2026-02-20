@@ -7,6 +7,7 @@ package io.openlineage.spark.agent.vendor.iceberg.util;
 
 import io.openlineage.spark.agent.util.ScalaConversionUtils;
 import java.net.URI;
+import java.util.Arrays;
 import java.util.Optional;
 import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.Table;
@@ -25,7 +26,8 @@ public class TableExtractor {
     }
 
     String tableName = parts[parts.length - 1];
-    String databaseName = parts.length > 1 ? parts[parts.length - 2] : null;
+    String databaseName =
+        parts.length > 1 ? String.join(".", Arrays.copyOf(parts, parts.length - 1)) : null;
     return Optional.of(
         new TableIdentifier(tableName, ScalaConversionUtils.toScalaOption(databaseName)));
   }

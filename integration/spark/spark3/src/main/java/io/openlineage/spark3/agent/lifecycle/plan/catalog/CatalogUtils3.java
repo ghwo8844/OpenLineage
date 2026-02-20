@@ -19,6 +19,8 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation;
 
+import com.netflix.spark.openlineage.NetflixIcebergHandler;
+
 public class CatalogUtils3 {
 
   private static List<RelationHandler> relationHandlers = getRelationHandlers();
@@ -26,6 +28,7 @@ public class CatalogUtils3 {
   private static List<CatalogHandler> getHandlers(OpenLineageContext context) {
     List<CatalogHandler> handlers =
         Arrays.asList(
+            new NetflixIcebergHandler(context), // <-- register our custom netflix handler that works with NetflixSparkCatalog
             new IcebergHandler(context),
             new DeltaHandler(context),
             new DatabricksDeltaHandler(context),

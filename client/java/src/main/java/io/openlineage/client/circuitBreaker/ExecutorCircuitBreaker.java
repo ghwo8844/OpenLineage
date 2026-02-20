@@ -13,6 +13,7 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -92,7 +93,18 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
 
   @Override
   public void close() {
-    log.info("No-op close");
+    log.info("Shutting down ExecutorCircuitBreaker executor");
+    executor.shutdown();
+    try {
+      if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+        log.warn("Executor did not terminate within 30s, forcing shutdown");
+        executor.shutdownNow();
+      }
+    } catch (InterruptedException e) {
+      log.warn("Interrupted while awaiting executor termination, forcing shutdown");
+      executor.shutdownNow();
+      Thread.currentThread().interrupt();
+    }
   }
 
   public Optional<Duration> getTimeout() {

@@ -100,6 +100,16 @@ public class TransformationInfo {
   }
 
   /**
+   * Method that creates a {@link TransformationInfo} object with custom description and metadata.
+   * Useful for tracking specific transformation details like map key access.
+   *
+   * @param description - descriptive text for the transformation
+   */
+  public static TransformationInfo transformation(String description) {
+    return new TransformationInfo(Types.DIRECT, Subtypes.TRANSFORMATION, description, false);
+  }
+
+  /**
    * Method that simplifies the creation of an {@link TransformationInfo} object representing
    * non-masking, {@link Types#DIRECT}, {@link Subtypes#AGGREGATION} transformation.
    */
@@ -161,8 +171,8 @@ public class TransformationInfo {
 
   /**
    * Merges current {@link TransformationInfo} with another e.g. given two dependencies with
-   * transformation types a -> b, t1 and b -> c, t2 the result of merge is transformation type for
-   * dependency a -> c
+   * transformation types a - b, t1 and b - c, t2 the result of merge is transformation type for
+   * dependency a - c
    *
    * <pre> Rules applied here are:
    * 1. if current transformation is indirect, new type and subtype is taken from current

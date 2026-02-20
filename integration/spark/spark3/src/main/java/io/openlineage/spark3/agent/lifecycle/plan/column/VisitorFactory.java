@@ -12,6 +12,8 @@ import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.Coa
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.ExpressionVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.IfVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.WindowVisitor;
+import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.GetMapValueVisitor;
+import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.GetStructFieldVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.AggregateVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.CreateTableAsSelectVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.DataSourceV2RelationVisitor;
@@ -54,6 +56,8 @@ class VisitorFactory {
             new IfVisitor(),
             new CoalesceVisitor(),
             new AggregateExpressionVisitor(),
-            new WindowVisitor()));
+            new WindowVisitor(),
+            new GetMapValueVisitor(),
+            new GetStructFieldVisitor()));
   }
 }

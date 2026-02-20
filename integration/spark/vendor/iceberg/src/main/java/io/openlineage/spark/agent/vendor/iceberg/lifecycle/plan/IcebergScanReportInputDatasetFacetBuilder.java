@@ -8,6 +8,7 @@ package io.openlineage.spark.agent.vendor.iceberg.lifecycle.plan;
 import static io.openlineage.spark.agent.vendor.iceberg.metrics.CatalogMetricsReporterHolder.VENDOR_CONTEXT_KEY;
 
 import io.openlineage.client.OpenLineage.InputDatasetFacet;
+import io.openlineage.spark.agent.util.FacetUtils;
 import io.openlineage.spark.agent.vendor.iceberg.metrics.CatalogMetricsReporterHolder;
 import io.openlineage.spark.api.CustomFacetBuilder;
 import io.openlineage.spark.api.OpenLineageContext;
@@ -31,6 +32,9 @@ public class IcebergScanReportInputDatasetFacetBuilder
 
   @Override
   public boolean isDefinedAt(Object x) {
+    if (FacetUtils.isFacetDisabled(context, "icebergScanReport")) {
+      return false;
+    }
     if (!(x instanceof Scan)) {
       return false;
     }

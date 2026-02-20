@@ -15,6 +15,14 @@ import lombok.Setter;
 public class Input {
   @Getter @Setter DatasetIdentifier datasetIdentifier;
   @Getter @Setter String fieldName;
+  @Getter @Setter String fieldType;
+  
+  // Constructor for backward compatibility
+  public Input(DatasetIdentifier datasetIdentifier, String fieldName) {
+    this.datasetIdentifier = datasetIdentifier;
+    this.fieldName = fieldName;
+    this.fieldType = null;
+  }
 
   @Override
   public boolean equals(Object o) {
@@ -22,11 +30,12 @@ public class Input {
     if (o == null || getClass() != o.getClass()) return false;
     Input input = (Input) o;
     return Objects.equals(datasetIdentifier, input.datasetIdentifier)
-        && Objects.equals(fieldName, input.fieldName);
+        && Objects.equals(fieldName, input.fieldName)
+        && Objects.equals(fieldType, input.fieldType);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(datasetIdentifier, fieldName);
+    return Objects.hash(datasetIdentifier, fieldName, fieldType);
   }
 }
