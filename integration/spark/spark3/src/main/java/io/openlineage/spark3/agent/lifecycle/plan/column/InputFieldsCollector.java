@@ -7,6 +7,7 @@ package io.openlineage.spark3.agent.lifecycle.plan.column;
 
 import io.openlineage.client.utils.DatasetIdentifier;
 import io.openlineage.client.utils.jdbc.JdbcDatasetUtils;
+import io.openlineage.spark.agent.lifecycle.Rdds;
 import io.openlineage.spark.agent.lifecycle.plan.column.ColumnLevelLineageBuilder;
 import io.openlineage.spark.agent.lifecycle.plan.column.ColumnLevelLineageContext;
 import io.openlineage.spark.agent.util.BigQueryUtils;
@@ -26,6 +27,7 @@ import java.util.Properties;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hadoop.fs.Path;
+import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation;
 import org.apache.spark.sql.catalyst.expressions.AttributeReference;
@@ -161,12 +163,16 @@ public class InputFieldsCollector {
         || node instanceof LocalRelation
         || node instanceof ExternalRDD
         || node instanceof LogicalRDD) {
-      // skip without warning
+      return extractOpaqueSourceDatasetIdentifier(node.getClass().getCanonicalName());
     } else if (node instanceof LeafNode) {
       log.warn("Could not extract dataset identifier from {}", node.getClass().getCanonicalName());
     }
 
     return Collections.emptyList();
+  }
+
+  private static List<DatasetIdentifier> extractOpaqueSourceDatasetIdentifier(String classname) {
+    return Collections.singletonList(new DatasetIdentifier("opaque-source", classname));
   }
 
   static List<DatasetIdentifier> extractDatasetIdentifier(
