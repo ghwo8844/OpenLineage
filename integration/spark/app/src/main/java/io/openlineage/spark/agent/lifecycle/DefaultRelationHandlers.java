@@ -8,6 +8,7 @@ package io.openlineage.spark.agent.lifecycle;
 import com.google.common.collect.ImmutableList;
 import io.openlineage.spark.agent.lifecycle.plan.catalog.RelationHandler;
 import io.openlineage.spark.api.OpenLineageContext;
+import io.openlineage.spark3.agent.lifecycle.plan.catalog.CassandraRelationHandler;
 import io.openlineage.spark3.agent.lifecycle.plan.catalog.iceberg.IcebergRelationHandler;
 import java.util.List;
 
@@ -16,6 +17,6 @@ final class DefaultRelationHandlers {
   private DefaultRelationHandlers() {}
 
   static List<RelationHandler> list(OpenLineageContext context) {
-    return ImmutableList.of(new IcebergRelationHandler(context));
+    return ImmutableList.of(new CassandraRelationHandler(), new IcebergRelationHandler(context));
   }
 }
