@@ -74,7 +74,8 @@ public class DataSourceV2RelationDatasetExtractor {
             identifier -> {
               if (ExtensionDataSourceV2Utils.hasExtensionLineage(relation)) {
                 ExtensionDataSourceV2Utils.loadBuilder(openLineage, datasetFacetsBuilder, relation);
-              } else {
+              } else if (relation.catalog().isDefined()
+                  && relation.catalog().get() instanceof TableCatalog) {
                 TableCatalog tableCatalog = (TableCatalog) relation.catalog().get();
 
                 if (includeVersionFacet && relation.identifier().isDefined()) {
