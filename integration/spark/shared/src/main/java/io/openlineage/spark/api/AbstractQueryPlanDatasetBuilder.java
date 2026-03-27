@@ -16,7 +16,9 @@ import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import lombok.extern.slf4j.Slf4j;
@@ -41,6 +43,19 @@ import scala.PartialFunction;
 @Slf4j
 public abstract class AbstractQueryPlanDatasetBuilder<T, P extends LogicalPlan, D extends Dataset>
     extends AbstractGenericArgPartialFunction<T, D> {
+  /**
+   * Classes whose optimized plan collapses to Project but whose analyzed plan contains the actual
+   * write node. Only these classes are allowed to fall back to the analyzed plan for output dataset
+   * extraction. Without this guard, read-only plans (e.g., collect()) would incorrectly produce
+   * output datasets when the analyzed plan root (SubqueryAlias) delegates to the source table.
+   */
+  private static final Set<String> ANALYZED_PLAN_FALLBACK_CLASSES =
+      new HashSet<>(
+          java.util.Arrays.asList(
+              "org.apache.spark.sql.execution.datasources.v2.WriteToDataSourceV2",
+              "org.apache.spark.sql.execution.streaming.sources.WriteToMicroBatchDataSourceV1",
+              "org.apache.spark.sql.execution.streaming.sources.WriteToMicroBatchDataSource"));
+
   protected final OpenLineageContext context;
   private final UnknownEntryFacetListener unknownEntryFacetListener =
       UnknownEntryFacetListener.getInstance();
@@ -75,7 +90,9 @@ public abstract class AbstractQueryPlanDatasetBuilder<T, P extends LogicalPlan, 
                     .collect(Collectors.toList());
               } else if (PlanUtils.safeIsDefinedAt(visitor, qe.optimizedPlan())) {
                 return PlanUtils.safeApply(visitor, qe.optimizedPlan());
-              } else if (PlanUtils.safeIsDefinedAt(visitor, qe.analyzed())) {
+              } else if (ANALYZED_PLAN_FALLBACK_CLASSES.contains(
+                      qe.analyzed().getClass().getName())
+                  && PlanUtils.safeIsDefinedAt(visitor, qe.analyzed())) {
                 return PlanUtils.safeApply(visitor, qe.analyzed());
               } else {
                 return Collections.<D>emptyList();
