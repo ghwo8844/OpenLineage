@@ -59,7 +59,7 @@ public class ColumnLevelLineageUtils {
     LogicalPlan adjustedPlan = getAdjustedPlan(olContext);
     OutputFieldsCollector.collect(context, adjustedPlan);
 
-    LogicalPlan fullPlan = olContext.getLogicalPlan();
+    LogicalPlan fullPlan = olContext.hasAnalyzedPlan() ? olContext.getAnalyzedPlan() : olContext.getLogicalPlan();
     if (fullPlan == null) {
       fullPlan = adjustedPlan;
     }
