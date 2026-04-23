@@ -14,6 +14,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -22,6 +23,8 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
   private Integer circuitCheckIntervalInMillis;
   protected Optional<Duration> timeout;
   private ExecutorService executor;
+
+  private final AtomicReference<CircuitBreakerState> lastTrip = new AtomicReference<>();
 
   public ExecutorCircuitBreaker(Integer circuitCheckIntervalInMillis) {
     this.circuitCheckIntervalInMillis = circuitCheckIntervalInMillis;
@@ -56,6 +59,9 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
               while (!circuitBreakerState.isClosed() && !isTimeoutExceeded) {
                 Thread.sleep(getCheckIntervalMillis());
                 circuitBreakerState = currentState();
+                if (circuitBreakerState.isClosed()) {
+                  lastTrip.set(circuitBreakerState);
+                }
 
                 Duration runningTime = Duration.ofMillis(System.currentTimeMillis() - startTime);
                 isTimeoutExceeded =
@@ -113,5 +119,10 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
 
   protected boolean isPercentageValueValid(Integer value) {
     return value != null && (value >= 0) && (value <= 100);
+  }
+
+  @Override
+  public Optional<CircuitBreakerState> consumeLastTrip() {
+    return Optional.ofNullable(lastTrip.getAndSet(null));
   }
 }
