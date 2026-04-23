@@ -7,6 +7,7 @@ package io.openlineage.client.circuitBreaker;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import org.junit.jupiter.api.Test;
 
@@ -66,5 +67,64 @@ class CommonCircuitBreakerTest {
         });
 
     assertThat(circuitBreaker.run(longLastingCallable)).isEqualTo(1);
+  }
+
+  @Test
+  void consumeLastTripEmptyBeforeAnyRun() {
+    CircuitBreaker circuitBreaker =
+        new CircuitBreakerFactory(new StaticCircuitBreakerConfig("false,true", 50)).build();
+    assertThat(circuitBreaker.consumeLastTrip()).isEmpty();
+  }
+
+  @Test
+  void consumeLastTripCapturesTripWhenBreakerClosesDuringRun() {
+    CircuitBreaker circuitBreaker =
+        new CircuitBreakerFactory(new StaticCircuitBreakerConfig("false,false,true", 50)).build();
+    Callable<Object> longLastingCallable =
+        (() -> {
+          Thread.sleep(2000);
+          return null;
+        });
+
+    circuitBreaker.run(longLastingCallable);
+
+    Optional<CircuitBreakerState> trip = circuitBreaker.consumeLastTrip();
+    assertThat(trip).isPresent();
+    assertThat(trip.get().isClosed()).isTrue();
+  }
+
+  @Test
+  void consumeLastTripClearsAfterRead() {
+    CircuitBreaker circuitBreaker =
+        new CircuitBreakerFactory(new StaticCircuitBreakerConfig("false,false,true", 50)).build();
+    Callable<Object> longLastingCallable =
+        (() -> {
+          Thread.sleep(2000);
+          return null;
+        });
+
+    circuitBreaker.run(longLastingCallable);
+
+    assertThat(circuitBreaker.consumeLastTrip()).isPresent();
+    assertThat(circuitBreaker.consumeLastTrip()).isEmpty();
+  }
+
+  @Test
+  void consumeLastTripEmptyWhenBreakerStaysOpen() {
+    CircuitBreaker circuitBreaker =
+        new CircuitBreakerFactory(new StaticCircuitBreakerConfig("false,false,false,false", 50))
+            .build();
+    Callable<Integer> shortCallable = (() -> 1);
+
+    circuitBreaker.run(shortCallable);
+
+    assertThat(circuitBreaker.consumeLastTrip()).isEmpty();
+  }
+
+  @Test
+  void noOpCircuitBreakerHasNoTrip() {
+    CircuitBreaker circuitBreaker = new CircuitBreakerFactory(null).build();
+    circuitBreaker.run(() -> 1);
+    assertThat(circuitBreaker.consumeLastTrip()).isEmpty();
   }
 }

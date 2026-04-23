@@ -5,6 +5,7 @@
 
 package io.openlineage.client.circuitBreaker;
 
+import java.util.Optional;
 import java.util.concurrent.Callable;
 
 public interface CircuitBreaker {
@@ -24,5 +25,16 @@ public interface CircuitBreaker {
 
   default int getCheckIntervalMillis() {
     return CIRCUIT_CHECK_INTERVAL_IN_MILLIS;
+  }
+
+  /**
+   * Atomically reads and clears the most recent trip state captured by this breaker, if any. A
+   * "trip" is an observed transition from open to closed. Implementations that track transitions
+   * should overwrite the captured state on each new trip so the caller sees the latest reason; the
+   * reference is cleared by this method so a repeated call (or a repeated {@code close()} on the
+   * client) will not re-emit the same trip.
+   */
+  default Optional<CircuitBreakerState> consumeLastTrip() {
+    return Optional.empty();
   }
 }

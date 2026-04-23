@@ -20,10 +20,13 @@ import io.openlineage.client.OpenLineage.DatasetEvent;
 import io.openlineage.client.OpenLineage.JobEvent;
 import io.openlineage.client.OpenLineage.RunEvent;
 import io.openlineage.client.circuitBreaker.CircuitBreaker;
+import io.openlineage.client.circuitBreaker.CircuitBreakerRunFacet;
 import io.openlineage.client.circuitBreaker.CircuitBreakerState;
 import io.openlineage.client.transports.Transport;
+import java.util.Optional;
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class OpenLineageClientTest {
 
@@ -102,5 +105,39 @@ class OpenLineageClientTest {
     when(circuitBreaker.currentState()).thenReturn(new CircuitBreakerState(false));
     client.emit(mock(DatasetEvent.class));
     verify(transport, times(1)).emit(any(DatasetEvent.class));
+  }
+
+  @SneakyThrows
+  @Test
+  void testCloseEmitsSignalWhenCircuitBreakerTripped() {
+    CircuitBreakerState trippedState = new CircuitBreakerState(true, "memory threshold exceeded");
+    when(circuitBreaker.consumeLastTrip()).thenReturn(Optional.of(trippedState));
+
+    client.close();
+
+    ArgumentCaptor<RunEvent> captor = ArgumentCaptor.forClass(RunEvent.class);
+    verify(transport, times(1)).emit(captor.capture());
+
+    RunEvent signal = captor.getValue();
+    assertThat(signal.getJob().getNamespace()).isEqualTo("openlineage");
+    assertThat(signal.getJob().getName()).isEqualTo("circuit-breaker");
+    assertThat(signal.getRun().getFacets().getAdditionalProperties())
+        .containsKey("circuitBreaker");
+
+    CircuitBreakerRunFacet facet =
+        (CircuitBreakerRunFacet)
+            signal.getRun().getFacets().getAdditionalProperties().get("circuitBreaker");
+    assertThat(facet.getReason()).isEqualTo("memory threshold exceeded");
+    assertThat(facet.getType()).isEqualTo(circuitBreaker.getClass().getSimpleName());
+  }
+
+  @SneakyThrows
+  @Test
+  void testCloseEmitsNoSignalWhenNoTrip() {
+    when(circuitBreaker.consumeLastTrip()).thenReturn(Optional.empty());
+
+    client.close();
+
+    verify(transport, times(0)).emit(any(RunEvent.class));
   }
 }

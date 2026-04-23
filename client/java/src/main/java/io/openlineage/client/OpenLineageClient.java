@@ -10,12 +10,16 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Timer;
 import io.openlineage.client.circuitBreaker.CircuitBreaker;
+import io.openlineage.client.circuitBreaker.CircuitBreakerRunFacet;
+import io.openlineage.client.circuitBreaker.CircuitBreakerState;
 import io.openlineage.client.metrics.MicrometerProvider;
 import io.openlineage.client.transports.ConsoleTransport;
 import io.openlineage.client.transports.Transport;
+import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.NonNull;
@@ -157,6 +161,7 @@ public final class OpenLineageClient implements AutoCloseable {
   @Override
   public void close() throws Exception {
     try {
+      flushCircuitBreakerTrip();
       transport.close();
     } catch (Exception e) {
       throw new OpenLineageClientException("Failed to close transport " + transport, e);
@@ -165,6 +170,44 @@ public final class OpenLineageClient implements AutoCloseable {
       meterRegistry.close();
       OpenLineageClientUtils.getExecutor().ifPresent(ExecutorService::shutdown);
     }
+  }
+
+  private void flushCircuitBreakerTrip() {
+    try {
+      circuitBreaker.ifPresent(
+          cb ->
+              cb.consumeLastTrip()
+                  .ifPresent(
+                      state -> {
+                        try {
+                          transport.emit(buildCircuitBreakerSignal(cb, state));
+                        } catch (Exception e) {
+                          log.warn("Failed to emit circuit breaker trip signal", e);
+                        }
+                      }));
+    } catch (Exception e) {
+      log.warn("Failed to flush circuit breaker trip", e);
+    }
+  }
+
+  private static OpenLineage.RunEvent buildCircuitBreakerSignal(
+      CircuitBreaker cb, CircuitBreakerState state) {
+    OpenLineage ol = new OpenLineage(CircuitBreakerRunFacet.PRODUCER_URI);
+    OpenLineage.RunFacets runFacets = ol.newRunFacetsBuilder().build();
+    runFacets
+        .getAdditionalProperties()
+        .put(
+            "circuitBreaker",
+            new CircuitBreakerRunFacet(
+                cb.getClass().getSimpleName(), state.getReason().orElse(null)));
+    return ol.newRunEventBuilder()
+        .eventTime(ZonedDateTime.now())
+        .eventType(OpenLineage.RunEvent.EventType.OTHER)
+        .run(ol.newRun(UUID.randomUUID(), runFacets))
+        .job(ol.newJob("openlineage", "circuit-breaker", ol.newJobFacetsBuilder().build()))
+        .inputs(Collections.emptyList())
+        .outputs(Collections.emptyList())
+        .build();
   }
 
   /**
