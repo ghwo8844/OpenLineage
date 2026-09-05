@@ -7,7 +7,8 @@ package io.openlineage.client.circuitBreaker;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.util.Optional;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Callable;
 import org.junit.jupiter.api.Test;
 
@@ -70,61 +71,121 @@ class CommonCircuitBreakerTest {
   }
 
   @Test
-  void consumeLastTripEmptyBeforeAnyRun() {
+  void onTripListenerFiresOnceWhenClosedAtEntry() {
+    CircuitBreaker circuitBreaker =
+        new CircuitBreakerFactory(new StaticCircuitBreakerConfig("true")).build();
+    List<CircuitBreakerState> trips = new ArrayList<>();
+    circuitBreaker.setOnTripListener(trips::add);
+
+    circuitBreaker.run(callableWithException);
+
+    assertThat(trips).hasSize(1);
+    assertThat(trips.get(0).isClosed()).isTrue();
+  }
+
+  @Test
+  void onTripListenerFiresOnceWhenClosedOnFirstBackgroundPoll() {
+    // Sequence: entry check (false) → background first poll (true).
+    // Loop body never runs; the post-loop branch fires with the trip,
+    // and observe() catches the open→closed transition exactly once.
     CircuitBreaker circuitBreaker =
         new CircuitBreakerFactory(new StaticCircuitBreakerConfig("false,true", 50)).build();
-    assertThat(circuitBreaker.consumeLastTrip()).isEmpty();
-  }
+    List<CircuitBreakerState> trips = new ArrayList<>();
+    circuitBreaker.setOnTripListener(trips::add);
 
-  @Test
-  void consumeLastTripCapturesTripWhenBreakerClosesDuringRun() {
-    CircuitBreaker circuitBreaker =
-        new CircuitBreakerFactory(new StaticCircuitBreakerConfig("false,false,true", 50)).build();
     Callable<Object> longLastingCallable =
         (() -> {
           Thread.sleep(2000);
           return null;
         });
-
     circuitBreaker.run(longLastingCallable);
 
-    Optional<CircuitBreakerState> trip = circuitBreaker.consumeLastTrip();
-    assertThat(trip).isPresent();
-    assertThat(trip.get().isClosed()).isTrue();
+    assertThat(trips).hasSize(1);
+    assertThat(trips.get(0).isClosed()).isTrue();
   }
 
   @Test
-  void consumeLastTripClearsAfterRead() {
+  void onTripListenerFiresOnceWhenClosedMidLoop() {
     CircuitBreaker circuitBreaker =
         new CircuitBreakerFactory(new StaticCircuitBreakerConfig("false,false,true", 50)).build();
+    List<CircuitBreakerState> trips = new ArrayList<>();
+    circuitBreaker.setOnTripListener(trips::add);
+
     Callable<Object> longLastingCallable =
         (() -> {
           Thread.sleep(2000);
           return null;
         });
-
     circuitBreaker.run(longLastingCallable);
 
-    assertThat(circuitBreaker.consumeLastTrip()).isPresent();
-    assertThat(circuitBreaker.consumeLastTrip()).isEmpty();
+    assertThat(trips).hasSize(1);
+    assertThat(trips.get(0).isClosed()).isTrue();
   }
 
   @Test
-  void consumeLastTripEmptyWhenBreakerStaysOpen() {
+  void onTripListenerDedupesAcrossRunsWhileStillClosed() {
+    // Multiple run() calls while the breaker stays closed: listener still fires only once.
+    CircuitBreaker circuitBreaker =
+        new CircuitBreakerFactory(new StaticCircuitBreakerConfig("true,true,true,true")).build();
+    List<CircuitBreakerState> trips = new ArrayList<>();
+    circuitBreaker.setOnTripListener(trips::add);
+
+    circuitBreaker.run(callableWithException);
+    circuitBreaker.run(callableWithException);
+    circuitBreaker.run(callableWithException);
+
+    assertThat(trips).hasSize(1);
+  }
+
+  @Test
+  void onTripListenerFiresAgainAfterReopen() {
+    // false → true (transition #1) → false (reset) → true (transition #2)
+    CircuitBreaker circuitBreaker =
+        new CircuitBreakerFactory(new StaticCircuitBreakerConfig("true,false,true")).build();
+    List<CircuitBreakerState> trips = new ArrayList<>();
+    circuitBreaker.setOnTripListener(trips::add);
+
+    circuitBreaker.run(callableWithException); // entry: closed → trip #1
+    circuitBreaker.run(() -> 1); // entry: open → reset
+    circuitBreaker.run(callableWithException); // entry: closed → trip #2
+
+    assertThat(trips).hasSize(2);
+  }
+
+  @Test
+  void onTripListenerNeverFiresWhenBreakerStaysOpen() {
     CircuitBreaker circuitBreaker =
         new CircuitBreakerFactory(new StaticCircuitBreakerConfig("false,false,false,false", 50))
             .build();
-    Callable<Integer> shortCallable = (() -> 1);
+    List<CircuitBreakerState> trips = new ArrayList<>();
+    circuitBreaker.setOnTripListener(trips::add);
 
-    circuitBreaker.run(shortCallable);
+    circuitBreaker.run(() -> 1);
 
-    assertThat(circuitBreaker.consumeLastTrip()).isEmpty();
+    assertThat(trips).isEmpty();
   }
 
   @Test
-  void noOpCircuitBreakerHasNoTrip() {
+  void onTripListenerExceptionsAreSwallowed() {
+    CircuitBreaker circuitBreaker =
+        new CircuitBreakerFactory(new StaticCircuitBreakerConfig("true")).build();
+    circuitBreaker.setOnTripListener(
+        s -> {
+          throw new RuntimeException("listener boom");
+        });
+
+    // Should not throw; run() still returns null because the breaker is closed at entry.
+    assertThat(circuitBreaker.run(callableWithException)).isNull();
+  }
+
+  @Test
+  void noOpCircuitBreakerListenerNeverFires() {
     CircuitBreaker circuitBreaker = new CircuitBreakerFactory(null).build();
+    List<CircuitBreakerState> trips = new ArrayList<>();
+    circuitBreaker.setOnTripListener(trips::add);
+
     circuitBreaker.run(() -> 1);
-    assertThat(circuitBreaker.consumeLastTrip()).isEmpty();
+
+    assertThat(trips).isEmpty();
   }
 }

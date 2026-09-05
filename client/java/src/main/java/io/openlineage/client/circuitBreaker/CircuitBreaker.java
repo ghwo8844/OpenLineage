@@ -5,8 +5,8 @@
 
 package io.openlineage.client.circuitBreaker;
 
-import java.util.Optional;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 public interface CircuitBreaker {
 
@@ -28,13 +28,10 @@ public interface CircuitBreaker {
   }
 
   /**
-   * Atomically reads and clears the most recent trip state captured by this breaker, if any. A
-   * "trip" is an observed transition from open to closed. Implementations that track transitions
-   * should overwrite the captured state on each new trip so the caller sees the latest reason; the
-   * reference is cleared by this method so a repeated call (or a repeated {@code close()} on the
-   * client) will not re-emit the same trip.
+   * Register a listener that is invoked exactly once per open→closed transition (the moment the
+   * breaker trips), with the immutable {@link CircuitBreakerState} captured at that moment. The
+   * listener is called synchronously on whatever thread observed the transition; implementations
+   * are expected to swallow listener exceptions so they cannot break the breaker.
    */
-  default Optional<CircuitBreakerState> consumeLastTrip() {
-    return Optional.empty();
-  }
+  default void setOnTripListener(Consumer<CircuitBreakerState> listener) {}
 }

@@ -6,7 +6,6 @@
 package io.openlineage.spark.agent.lifecycle;
 
 import com.google.common.collect.ImmutableList;
-import com.netflix.spark.openlineage.NetflixIcebergHandler;
 import io.openlineage.spark.agent.lifecycle.plan.catalog.CatalogHandler;
 import io.openlineage.spark.api.OpenLineageContext;
 import io.openlineage.spark3.agent.lifecycle.plan.catalog.ClickHouseHandler;
@@ -16,6 +15,7 @@ import io.openlineage.spark3.agent.lifecycle.plan.catalog.DeltaHandler;
 import io.openlineage.spark3.agent.lifecycle.plan.catalog.JdbcHandler;
 import io.openlineage.spark3.agent.lifecycle.plan.catalog.V2SessionCatalogHandler;
 import io.openlineage.spark3.agent.lifecycle.plan.catalog.iceberg.IcebergHandler;
+import io.openlineage.spark3.agent.lifecycle.plan.catalog.iceberg.NetflixIcebergHandler;
 import java.util.List;
 
 /** Catalog handlers available to every Spark 3.x / 4.x version. */

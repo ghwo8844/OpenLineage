@@ -20,9 +20,10 @@ import lombok.Getter;
  * TransformationInfo#type} indicate whether the transformation is direct (target value was derived
  * from source value) or indirect (target value was influenced by source value). {@link
  * TransformationInfo#subType} further divide the transformations. {@link
- * TransformationInfo#masking} indicates whether the transformation obfuscated the source value
+ * TransformationInfo#masking} indicates whether the transformation obfuscated the source value.
+ * {@link TransformationInfo#fieldPath} stores the SQL-style access path during complex-type
+ * (map/struct) traversal, e.g. {@code "[key1][innerkey1]"} or {@code ".field1.field2"}.
  */
-@AllArgsConstructor
 public class TransformationInfo {
 
   public enum Types {
@@ -46,6 +47,24 @@ public class TransformationInfo {
   @Getter private final Subtypes subType;
   @Getter private final String description;
   @Getter private final Boolean masking;
+  @Getter private final String fieldPath;
+
+  public TransformationInfo(Types type, Subtypes subType, String description, Boolean masking) {
+    this.type = type;
+    this.subType = subType;
+    this.description = description;
+    this.masking = masking;
+    this.fieldPath = null;
+  }
+
+  public TransformationInfo(
+      Types type, Subtypes subType, String description, Boolean masking, String fieldPath) {
+    this.type = type;
+    this.subType = subType;
+    this.description = description;
+    this.masking = masking;
+    this.fieldPath = fieldPath;
+  }
 
   private static final TransformationInfo TRANSFORMATION_IDENTITY =
       new TransformationInfo(Types.DIRECT, Subtypes.IDENTITY, "", false);
@@ -236,7 +255,7 @@ public class TransformationInfo {
   public TransformationInfo withDescription(String description) {
     return Objects.equals(this.description, description)
         ? this
-        : new TransformationInfo(type, subType, description, masking);
+        : new TransformationInfo(type, subType, description, masking, fieldPath);
   }
 
   @Override
@@ -247,12 +266,13 @@ public class TransformationInfo {
     return Objects.equals(type, that.type)
         && Objects.equals(subType, that.subType)
         && Objects.equals(description, that.description)
-        && Objects.equals(masking, that.masking);
+        && Objects.equals(masking, that.masking)
+        && Objects.equals(fieldPath, that.fieldPath);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(type, subType, description, masking);
+    return Objects.hash(type, subType, description, masking, fieldPath);
   }
 
   /**
@@ -291,7 +311,8 @@ public class TransformationInfo {
         res.getType(),
         res.getSubType(),
         descriptionMerger.apply(this.getDescription(), another.getDescription()),
-        this.getMasking() || another.getMasking());
+        this.getMasking() || another.getMasking(),
+        res.getFieldPath());
   }
 
   public TransformationInfo merge(TransformationInfo another) {
@@ -302,7 +323,7 @@ public class TransformationInfo {
     return new OpenLineage.InputFieldTransformationsBuilder()
         .type(type.name())
         .subtype(subType.name())
-        .description(description)
+        .description(fieldPath != null ? fieldPath : description)
         .masking(masking)
         .build();
   }
@@ -318,6 +339,7 @@ public class TransformationInfo {
         + '\''
         + ", "
         + masking
+        + (fieldPath != null ? ", fieldPath='" + fieldPath + '\'' : "")
         + ')';
   }
 }
