@@ -8,6 +8,7 @@ package io.openlineage.spark3.agent.lifecycle.plan.column;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -83,9 +84,18 @@ class ViewDependencyCollectorTest {
 
     ViewDependencyCollector.collect(context, root);
 
-    verify(builder).addDependency(viewOutputExprId, viewExprId, TransformationInfo.identity());
+    verify(builder)
+        .addDependency(
+            eq(viewOutputExprId),
+            eq(viewExprId),
+            anyString(),
+            eq(TransformationInfo.identity("view_col AS selected")));
     verify(builder, never())
-        .addDependency(unrelatedOutputExprId, unrelatedExprId, TransformationInfo.identity());
+        .addDependency(
+            eq(unrelatedOutputExprId),
+            eq(unrelatedExprId),
+            anyString(),
+            any(TransformationInfo.class));
   }
 
   @Test
@@ -119,9 +129,24 @@ class ViewDependencyCollectorTest {
 
     ViewDependencyCollector.collect(context, plan);
 
-    verify(builder).addDependency(outputExprId, referenceExprId, TransformationInfo.identity());
-    verify(builder).addDependency(referenceExprId, definitionExprId, TransformationInfo.identity());
-    verify(builder).addDependency(definitionExprId, viewExprId, TransformationInfo.identity());
+    verify(builder)
+        .addDependency(
+            eq(outputExprId),
+            eq(referenceExprId),
+            anyString(),
+            eq(TransformationInfo.identity("view_col AS selected")));
+    verify(builder)
+        .addDependency(
+            eq(referenceExprId),
+            eq(definitionExprId),
+            anyString(),
+            eq(TransformationInfo.identity()));
+    verify(builder)
+        .addDependency(
+            eq(definitionExprId),
+            eq(viewExprId),
+            anyString(),
+            eq(TransformationInfo.identity("view_col AS view_col")));
   }
 
   @Test
@@ -176,15 +201,33 @@ class ViewDependencyCollectorTest {
 
     ViewDependencyCollector.collect(context, outerView);
 
-    verify(builder).addDatasetDependency(any(ExprId.class));
+    verify(builder).addDatasetDependency(any(ExprId.class), anyString());
     verify(builder)
         .addDependency(
             any(ExprId.class),
             eq(nestedViewExprId),
-            eq(TransformationInfo.indirect(TransformationInfo.Subtypes.JOIN)));
-    verify(builder).addDependency(nestedViewExprId, referenceExprId, TransformationInfo.identity());
-    verify(builder).addDependency(referenceExprId, definitionExprId, TransformationInfo.identity());
-    verify(builder).addDependency(definitionExprId, sourceExprId, TransformationInfo.identity());
+            anyString(),
+            eq(
+                TransformationInfo.indirect(
+                    TransformationInfo.Subtypes.JOIN, "(left_ptp_id = ptp_id)")));
+    verify(builder)
+        .addDependency(
+            eq(nestedViewExprId),
+            eq(referenceExprId),
+            anyString(),
+            eq(TransformationInfo.identity("ptp_id AS ptp_id")));
+    verify(builder)
+        .addDependency(
+            eq(referenceExprId),
+            eq(definitionExprId),
+            anyString(),
+            eq(TransformationInfo.identity()));
+    verify(builder)
+        .addDependency(
+            eq(definitionExprId),
+            eq(sourceExprId),
+            anyString(),
+            eq(TransformationInfo.identity("ptp_id AS ptp_id")));
   }
 
   @Test
@@ -205,9 +248,10 @@ class ViewDependencyCollectorTest {
 
     ViewDependencyCollector.collect(context, outerProject);
 
-    verify(builder, never()).addDatasetDependency(any(ExprId.class));
+    verify(builder, never()).addDatasetDependency(any(ExprId.class), anyString());
     verify(builder, never())
-        .addDependency(any(ExprId.class), eq(nestedViewExprId), any(TransformationInfo.class));
+        .addDependency(
+            any(ExprId.class), eq(nestedViewExprId), anyString(), any(TransformationInfo.class));
   }
 
   @Test
@@ -269,11 +313,23 @@ class ViewDependencyCollectorTest {
     assertDoesNotThrow(() -> ViewDependencyCollector.collect(context, plan));
 
     verify(builder)
-        .addDependency(consumerReferenceExprId, definitionExprId, TransformationInfo.identity());
+        .addDependency(
+            eq(consumerReferenceExprId),
+            eq(definitionExprId),
+            anyString(),
+            eq(TransformationInfo.identity()));
     verify(builder)
-        .addDependency(selfReferenceExprId, definitionExprId, TransformationInfo.identity());
+        .addDependency(
+            eq(selfReferenceExprId),
+            eq(definitionExprId),
+            anyString(),
+            eq(TransformationInfo.identity()));
     verify(builder)
-        .addDependency(viewOutputExprId, viewSourceExprId, TransformationInfo.identity());
+        .addDependency(
+            eq(viewOutputExprId),
+            eq(viewSourceExprId),
+            anyString(),
+            eq(TransformationInfo.identity("value AS view_value")));
   }
 
   @Test
@@ -354,7 +410,10 @@ class ViewDependencyCollectorTest {
 
     verify(builder)
         .addDependency(
-            referencePayloadExprId, definitionPayloadExprId, TransformationInfo.identity());
+            eq(referencePayloadExprId),
+            eq(definitionPayloadExprId),
+            anyString(),
+            eq(TransformationInfo.identity()));
   }
 
   @Test
@@ -376,7 +435,12 @@ class ViewDependencyCollectorTest {
 
     ViewDependencyCollector.collect(context, consumer);
 
-    verify(builder).addDependency(outputExprId, viewExprId, TransformationInfo.identity());
+    verify(builder)
+        .addDependency(
+            eq(outputExprId),
+            eq(viewExprId),
+            anyString(),
+            eq(TransformationInfo.identity("view_col AS selected")));
   }
 
   @Test

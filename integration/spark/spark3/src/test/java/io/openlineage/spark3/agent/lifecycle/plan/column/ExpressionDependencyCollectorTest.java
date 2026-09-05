@@ -393,8 +393,17 @@ class ExpressionDependencyCollectorTest {
 
     verify(builder, times(1))
         .addDependency(
-            exprId3, exprId1, TransformationInfo.indirect(TransformationInfo.Subtypes.CONDITIONAL));
-    verify(builder, times(1)).addDependency(exprId3, exprId1, TransformationInfo.identity());
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            TransformationInfo.indirect(
+                TransformationInfo.Subtypes.CONDITIONAL, "coalesce(name1, 0) AS res"));
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            TransformationInfo.transformation("coalesce(name1, 0) AS res"));
     verifyNoMoreInteractions(builder);
   }
 
@@ -428,10 +437,11 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "mapcol['key1']['innerkey1'] AS res",
                 false,
                 "['key1']"));
     // Full nested path: ['key1']['innerkey1']
@@ -439,10 +449,11 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "mapcol['key1']['innerkey1'] AS res",
                 false,
                 "['key1']['innerkey1']"));
     // The spurious ['innerkey1']-only entry must NOT appear
@@ -450,10 +461,11 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "mapcol['key1']['innerkey1'] AS res",
                 false,
                 "['innerkey1']"));
   }
@@ -483,10 +495,11 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "structcol.`field1`.`field2` AS res",
                 false,
                 ".field1"));
     // Full nested path: .field1.field2
@@ -494,10 +507,11 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "structcol.`field1`.`field2` AS res",
                 false,
                 ".field1.field2"));
     // The spurious .field2-only entry must NOT appear
@@ -505,10 +519,11 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "structcol.`field1`.`field2` AS res",
                 false,
                 ".field2"));
   }
@@ -544,10 +559,11 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "mapcol['key1'].`field` AS res",
                 false,
                 "['key1']"));
     // Full cross-type path: ['key1'].field
@@ -555,10 +571,11 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "mapcol['key1'].`field` AS res",
                 false,
                 "['key1'].field"));
   }
@@ -596,14 +613,20 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "scores[key_col] AS res",
                 false,
                 "[key_col]"));
     // Key column itself is also a TRANSFORMATION dependency
-    verify(builder, times(1)).addDependency(exprId3, exprId2, TransformationInfo.transformation());
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId2,
+            ALIAS_NAME,
+            TransformationInfo.transformation("scores[key_col] AS res"));
   }
 
   @Test
@@ -630,10 +653,11 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "arraycol[5] AS res",
                 false,
                 "[0]"));
   }
@@ -665,10 +689,11 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "arraycol[0][1] AS res",
                 false,
                 "[0]"));
     // Full nested path: [0][0]
@@ -676,10 +701,11 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "arraycol[0][1] AS res",
                 false,
                 "[0][0]"));
     // The spurious "[1]"-only entry must NOT appear
@@ -687,10 +713,11 @@ class ExpressionDependencyCollectorTest {
         .addDependency(
             exprId3,
             exprId1,
+            ALIAS_NAME,
             new TransformationInfo(
                 TransformationInfo.Types.DIRECT,
                 TransformationInfo.Subtypes.TRANSFORMATION,
-                "",
+                "arraycol[0][1] AS res",
                 false,
                 "[1]"));
   }
@@ -708,6 +735,16 @@ class ExpressionDependencyCollectorTest {
     return new AttributeReference(
         name,
         IntegerType$.MODULE$,
+        false,
+        Metadata$.MODULE$.empty(),
+        exprId,
+        ScalaConversionUtils.asScalaSeqEmpty());
+  }
+
+  private static AttributeReference structField(String name, StructType type, ExprId exprId) {
+    return new AttributeReference(
+        name,
+        type,
         false,
         Metadata$.MODULE$.empty(),
         exprId,

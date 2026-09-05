@@ -5,7 +5,6 @@
 
 package io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator;
 
-import io.openlineage.client.utils.TransformationInfo;
 import io.openlineage.spark.agent.lifecycle.plan.column.ColumnLevelLineageBuilder;
 import io.openlineage.spark.agent.util.ScalaConversionUtils;
 import io.openlineage.spark3.agent.lifecycle.plan.column.ExpressionTraverser;
@@ -51,11 +50,7 @@ public class ExpandVisitor implements OperatorVisitor {
           .filter(row -> row.size() == output.size()) // guard against malformed Expand nodes
           .map(row -> row.get(col))
           .filter(expr -> !isNullExpression(expr))
-          .forEach(
-              expr ->
-                  ExpressionTraverser.of(
-                          expr, attr.exprId(), TransformationInfo.identity(), builder)
-                      .traverse());
+          .forEach(expr -> ExpressionTraverser.of(expr, attr.exprId(), builder).traverse());
     }
   }
 

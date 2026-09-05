@@ -74,7 +74,8 @@ public class CreateViewDatasetBuilder extends AbstractQueryPlanOutputDatasetBuil
               openLineage.newLifecycleStateChangeDatasetFacet(lifecycleState, null))
           .dataSource(PlanUtils.datasourceFacet(openLineage, datasetIdentifier.getNamespace()));
 
-      return Collections.singletonList(outputDataset().getDataset(datasetIdentifier, builder));
+      return Collections.singletonList(
+          outputDataset().sparkDatasetBuilder(builder).dataset(datasetIdentifier).build());
 
     } catch (Exception e) {
       log.warn("Failed to build dataset for CreateView command: {}", e.getMessage(), e);

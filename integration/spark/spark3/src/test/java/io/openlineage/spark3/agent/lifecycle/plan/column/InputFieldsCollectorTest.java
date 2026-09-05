@@ -44,8 +44,10 @@ import org.apache.hadoop.fs.Path;
 import org.apache.spark.rdd.RDD;
 import org.apache.spark.scheduler.SparkListenerEvent;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation;
+import org.apache.spark.sql.catalyst.expressions.Attribute;
 import org.apache.spark.sql.catalyst.expressions.AttributeReference;
 import org.apache.spark.sql.catalyst.expressions.ExprId;
 import org.apache.spark.sql.catalyst.expressions.NamedExpression;
@@ -443,7 +445,7 @@ class InputFieldsCollectorTest {
   @SuppressWarnings("unchecked")
   void collectWhenLogicalRDDWithFileLikeRdds() {
     LogicalRDD logicalRDD = mock(LogicalRDD.class);
-    RDD<?> rdd = mock(RDD.class);
+    RDD<InternalRow> rdd = mock(RDD.class);
     when(logicalRDD.rdd()).thenReturn(rdd);
 
     LogicalPlan plan = createPlanWithGrandChild(logicalRDD);
@@ -451,7 +453,7 @@ class InputFieldsCollectorTest {
     when(logicalRDD.output())
         .thenReturn(
             scala.collection.JavaConverters.collectionAsScalaIterableConverter(
-                    Arrays.asList(attributeReference))
+                    Arrays.<Attribute>asList(attributeReference))
                 .asScala()
                 .toSeq());
 
@@ -475,7 +477,7 @@ class InputFieldsCollectorTest {
   @SuppressWarnings("unchecked")
   void collectWhenLogicalRDDWithoutFileLikeRdds() {
     LogicalRDD logicalRDD = mock(LogicalRDD.class);
-    RDD<?> rdd = mock(RDD.class);
+    RDD<InternalRow> rdd = mock(RDD.class);
     when(logicalRDD.rdd()).thenReturn(rdd);
 
     LogicalPlan plan = createPlanWithGrandChild(logicalRDD);
@@ -483,7 +485,7 @@ class InputFieldsCollectorTest {
     when(logicalRDD.output())
         .thenReturn(
             scala.collection.JavaConverters.collectionAsScalaIterableConverter(
-                    Arrays.asList(attributeReference))
+                    Arrays.<Attribute>asList(attributeReference))
                 .asScala()
                 .toSeq());
 

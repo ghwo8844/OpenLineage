@@ -131,7 +131,9 @@ public class CreateViewInputDatasetBuilder
         }
 
         DatasetFactory<OpenLineage.InputDataset> factory = DatasetFactory.input(context);
-        return dedup.stream().map(factory::getDataset).collect(Collectors.toList());
+        return dedup.stream()
+                .map(di -> factory.sparkDatasetBuilder().dataset(di).build())
+                .collect(Collectors.toList());
     }
 
     private static List<LogicalPlan> findSubqueryPlans(LogicalPlan node) {

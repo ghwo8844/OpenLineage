@@ -253,6 +253,7 @@ final class ViewDependencyCollector {
           .addDependency(
               referenceAttribute.exprId(),
               definitionAttribute.exprId(),
+              referenceAttribute.qualifiedName(),
               TransformationInfo.identity());
     }
   }

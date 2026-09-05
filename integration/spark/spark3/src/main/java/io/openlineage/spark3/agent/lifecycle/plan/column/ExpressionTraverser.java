@@ -121,7 +121,11 @@ public class ExpressionTraverser {
   public ExpressionTraverser copyOverrideTransform(
       Expression expression, TransformationInfo transformationInfo) {
     return ExpressionTraverser.of(
-        expression, this.outputExpressionId, transformationInfo, this.builder);
+        expression,
+        this.outputExpressionId,
+        this.outputExpressionString,
+        transformationInfo,
+        this.builder);
   }
 
   /**

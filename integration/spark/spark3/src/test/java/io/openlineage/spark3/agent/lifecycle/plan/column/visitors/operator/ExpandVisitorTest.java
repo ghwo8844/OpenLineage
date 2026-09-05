@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
 import org.apache.spark.sql.types.IntegerType$;
 import org.apache.spark.sql.types.LongType$;
 import org.junit.jupiter.api.Test;
-import scala.collection.immutable.Seq;
+import scala.collection.Seq;
 
 class ExpandVisitorTest {
 
@@ -66,7 +66,9 @@ class ExpandVisitorTest {
     visitor.apply(expand, builder);
 
     // col_exp#2L depends on col#1L (from row0)
-    verify(builder).addDependency(EXPR_ID_2, EXPR_ID_1, TransformationInfo.identity());
+    verify(builder)
+        .addDependency(
+            EXPR_ID_2, EXPR_ID_1, sourceAttr.sql(), TransformationInfo.identity(sourceAttr.sql()));
     // gid has only literals — no column dependencies
     verifyNoMoreInteractions(builder);
   }
@@ -85,7 +87,9 @@ class ExpandVisitorTest {
     Expand expand = new Expand(projections, output, mock(LogicalPlan.class));
     visitor.apply(expand, builder);
 
-    verify(builder).addDependency(EXPR_ID_2, EXPR_ID_1, TransformationInfo.identity());
+    verify(builder)
+        .addDependency(
+            EXPR_ID_2, EXPR_ID_1, sourceAttr.sql(), TransformationInfo.identity(sourceAttr.sql()));
     verifyNoMoreInteractions(builder);
   }
 
@@ -116,8 +120,10 @@ class ExpandVisitorTest {
     visitor.apply(expand, builder);
 
     // Each expanded attr maps to its own source — no cross-contamination
-    verify(builder).addDependency(EXPR_ID_2, EXPR_ID_1, TransformationInfo.identity());
-    verify(builder).addDependency(EXPR_ID_4, EXPR_ID_3, TransformationInfo.identity());
+    verify(builder)
+        .addDependency(EXPR_ID_2, EXPR_ID_1, colA.sql(), TransformationInfo.identity(colA.sql()));
+    verify(builder)
+        .addDependency(EXPR_ID_4, EXPR_ID_3, colB.sql(), TransformationInfo.identity(colB.sql()));
     verifyNoMoreInteractions(builder);
   }
 

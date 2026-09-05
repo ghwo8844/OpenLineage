@@ -58,8 +58,10 @@ class ObjectTransformationVisitorTest {
 
     // Conservative all-to-all against the leaf's output; InputFieldsCollector attaches the
     // opaque-source identifier for that same exprId.
-    verify(builder).addDependency(EXPR_ID_2, EXPR_ID_1, TransformationInfo.transformation());
-    verify(builder).addDependency(EXPR_ID_3, EXPR_ID_1, TransformationInfo.transformation());
+    verify(builder)
+        .addDependency(EXPR_ID_2, EXPR_ID_1, NAME_2, TransformationInfo.transformation());
+    verify(builder)
+        .addDependency(EXPR_ID_3, EXPR_ID_1, NAME_3, TransformationInfo.transformation());
     verifyNoMoreInteractions(builder);
   }
 
@@ -75,7 +77,8 @@ class ObjectTransformationVisitorTest {
 
     assertDoesNotThrow(() -> visitor.apply(serialize, builder));
 
-    verify(builder).addDependency(EXPR_ID_2, EXPR_ID_1, TransformationInfo.transformation());
+    verify(builder)
+        .addDependency(EXPR_ID_2, EXPR_ID_1, NAME_2, TransformationInfo.transformation());
     verifyNoMoreInteractions(builder);
   }
 
@@ -96,7 +99,8 @@ class ObjectTransformationVisitorTest {
 
     visitor.apply(serialize, builder);
 
-    verify(builder).addDependency(EXPR_ID_2, EXPR_ID_1, TransformationInfo.transformation());
+    verify(builder)
+        .addDependency(EXPR_ID_2, EXPR_ID_1, NAME_2, TransformationInfo.transformation());
     verifyNoMoreInteractions(builder);
   }
 }

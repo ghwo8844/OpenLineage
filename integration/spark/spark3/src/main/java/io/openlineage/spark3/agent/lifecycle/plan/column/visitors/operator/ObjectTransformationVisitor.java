@@ -51,7 +51,11 @@ public class ObjectTransformationVisitor implements OperatorVisitor {
     // Create all-to-all dependencies: each output depends on every input
     for (Attribute output : outputAttrs) {
       for (Attribute input : inputAttrs) {
-        builder.addDependency(output.exprId(), input.exprId(), TransformationInfo.transformation());
+        builder.addDependency(
+            output.exprId(),
+            input.exprId(),
+            output.qualifiedName(),
+            TransformationInfo.transformation());
       }
     }
   }
