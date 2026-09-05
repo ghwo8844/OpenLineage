@@ -13,9 +13,12 @@ import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.composite.CompositeMeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.openlineage.client.Environment;
+import io.openlineage.client.OpenLineage;
 import io.openlineage.client.OpenLineageConfig;
 import io.openlineage.client.circuitBreaker.CircuitBreaker;
 import io.openlineage.client.circuitBreaker.CircuitBreakerFactory;
+import io.openlineage.client.circuitBreaker.CircuitBreakerRunFacet;
+import io.openlineage.client.circuitBreaker.CircuitBreakerState;
 import io.openlineage.client.circuitBreaker.NoOpCircuitBreaker;
 import io.openlineage.client.metrics.MicrometerProvider;
 import io.openlineage.client.utils.RuntimeUtils;
@@ -25,8 +28,11 @@ import io.openlineage.spark.agent.util.ScalaConversionUtils;
 import io.openlineage.spark.agent.util.SparkVersionUtils;
 import io.openlineage.spark.api.SparkOpenLineageConfig;
 import java.net.URISyntaxException;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.UUID;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
@@ -377,7 +383,18 @@ public class OpenLineageSparkListener extends org.apache.spark.scheduler.SparkLi
       // Needs to be done before initializing OpenLineageClient
       initializeMetrics(config);
       contextFactory = new ContextFactory(new EventEmitter(config, appName), meterRegistry, config);
-      circuitBreaker = new CircuitBreakerFactory(config.getCircuitBreaker()).build();
+      CircuitBreaker cb = new CircuitBreakerFactory(config.getCircuitBreaker()).build();
+      cb.setOnTripListener(
+          state -> {
+            try {
+              contextFactory.openLineageEventEmitter
+                  .getClient()
+                  .emit(buildCircuitBreakerSignal(cb, state));
+            } catch (Exception e) {
+              log.warn("Failed to emit circuit breaker trip signal", e);
+            }
+          });
+      circuitBreaker = cb;
     } catch (URISyntaxException e) {
       log.error("Unable to parse OpenLineage endpoint. Lineage events will not be collected", e);
     }
@@ -435,5 +452,23 @@ public class OpenLineageSparkListener extends org.apache.spark.scheduler.SparkLi
     boolean isDisabledFromConf =
         conf != null && conf.getBoolean("spark.openlineage.disabled", false);
     return Boolean.parseBoolean(isDisabled) || isDisabledFromConf;
+  }
+
+  private static OpenLineage.RunEvent buildCircuitBreakerSignal(
+      CircuitBreaker cb, CircuitBreakerState state) {
+    OpenLineage ol = new OpenLineage(CircuitBreakerRunFacet.PRODUCER_URI);
+    OpenLineage.RunFacets runFacets =
+        ol.newRunFacetsBuilder()
+            .put(
+                "circuitBreaker",
+                new CircuitBreakerRunFacet(
+                    cb.getClass().getSimpleName(), state.getReason().orElse(null)))
+            .build();
+    return ol.newRunEventBuilder()
+        .eventTime(ZonedDateTime.now(ZoneOffset.UTC))
+        .eventType(OpenLineage.RunEvent.EventType.OTHER)
+        .run(ol.newRun(UUID.randomUUID(), runFacets))
+        .job(ol.newJob("openlineage", "circuit-breaker", ol.newJobFacetsBuilder().build()))
+        .build();
   }
 }

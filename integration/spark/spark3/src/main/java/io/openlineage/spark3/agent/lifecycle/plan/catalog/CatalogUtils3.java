@@ -10,6 +10,7 @@ import io.openlineage.client.dataset.DatasetCompositeFacetsBuilder;
 import io.openlineage.client.utils.DatasetIdentifier;
 import io.openlineage.spark.api.OpenLineageContext;
 import io.openlineage.spark3.agent.lifecycle.plan.catalog.iceberg.IcebergHandler;
+import io.openlineage.spark3.agent.lifecycle.plan.catalog.iceberg.NetflixIcebergHandler;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -18,8 +19,6 @@ import java.util.stream.Collectors;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation;
-
-import com.netflix.spark.openlineage.NetflixIcebergHandler;
 
 public class CatalogUtils3 {
 

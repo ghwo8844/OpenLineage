@@ -10,10 +10,11 @@ import io.openlineage.client.OpenLineage;
 import java.net.URI;
 
 /**
- * Run facet emitted alongside a synthetic circuit-breaker signal event when the
- * OpenLineage circuit breaker has tripped during a client's lifetime. The signal
- * is emitted from {@code OpenLineageClient.close()} so lineage backends can
- * surface trips in-band with normal lineage traffic.
+ * Run facet attached to the synthetic circuit-breaker signal event emitted by
+ * {@link io.openlineage.client.OpenLineageClient} when the breaker observes an
+ * open→closed transition. Carries the breaker implementation type and the
+ * reason it tripped, so lineage backends can surface trips in-band with normal
+ * lineage traffic.
  */
 public class CircuitBreakerRunFacet extends OpenLineage.DefaultRunFacet {
 

@@ -59,7 +59,8 @@ public class ColumnLevelLineageUtils {
     LogicalPlan adjustedPlan = getAdjustedPlan(olContext);
     OutputFieldsCollector.collect(context, adjustedPlan);
 
-    LogicalPlan fullPlan = olContext.hasAnalyzedPlan() ? olContext.getAnalyzedPlan() : olContext.getLogicalPlan();
+    LogicalPlan fullPlan =
+        olContext.hasAnalyzedPlan() ? olContext.getAnalyzedPlan() : olContext.getLogicalPlan();
     if (fullPlan == null) {
       fullPlan = adjustedPlan;
     }
@@ -127,8 +128,16 @@ public class ColumnLevelLineageUtils {
   }
 
   static void collectInputsAndExpressionDependencies(
+      ColumnLevelLineageContext context, LogicalPlan plan) {
+    collectInputsAndExpressionDependencies(context, plan, plan);
+  }
+
+  static void collectInputsAndExpressionDependencies(
       ColumnLevelLineageContext context, LogicalPlan optimizedPlan, LogicalPlan fullPlan) {
     ExpressionDependencyCollector.collect(context, optimizedPlan);
+    if (context.getOlContext().hasAnalyzedPlan() && fullPlan != null && fullPlan != optimizedPlan) {
+      ViewDependencyCollector.collect(context, fullPlan);
+    }
     InputFieldsCollector.collect(context, fullPlan);
 
     // iterate children plans and see if they contain dataset caching
@@ -139,8 +148,10 @@ public class ColumnLevelLineageUtils {
               PlanUtils3.getLogicalPlanOf(context.getOlContext(), (InMemoryRelation) node)
                   .ifPresent(
                       cachedPlan -> {
-                        // run self for the cached plan
-                        collectInputsAndExpressionDependencies(context, cachedPlan, fullPlan);
+                        // run self for the cached plan; pass cachedPlan as fullPlan so that
+                        // InputFieldsCollector sees the cached plan's nodes (e.g. SubqueryAlias
+                        // for Iceberg V2 views) rather than re-scanning the outer query's plan
+                        collectInputsAndExpressionDependencies(context, cachedPlan, cachedPlan);
 
                         // map outputs of cachedPlan onto inputs of InMemoryRelation
                         Map<String, ExprId> idMap =

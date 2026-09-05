@@ -11,13 +11,6 @@ import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.GetMapValue;
 import org.apache.spark.sql.catalyst.expressions.Literal;
 
-/**
- * Visitor that extracts lineage from Spark {@link GetMapValue} expressions.
- *
- * <p>For map access expressions like {@code map_col['key']}, this visitor tracks both the
- * dependency on the map column itself and captures the specific key being accessed for enhanced
- * transformation tracking.
- */
 public class GetMapValueVisitor implements ExpressionVisitor {
 
   @Override
@@ -28,24 +21,18 @@ public class GetMapValueVisitor implements ExpressionVisitor {
   @Override
   public void apply(Expression expression, ExpressionTraverser traverser) {
     GetMapValue expr = (GetMapValue) expression;
-    
-    // Track dependency on the map column itself
-    traverser.copyFor(expr.child(), TransformationInfo.transformation()).traverse();
-    
-    // If the key is a literal, we can enhance the transformation info with the map key
-    if (expr.key() instanceof Literal) {
-      Literal keyLiteral = (Literal) expr.key();
-      String mapKey = keyLiteral.value() != null ? keyLiteral.value().toString() : "null";
-      
-      // Create transformation info that includes the map key in description
-      TransformationInfo mapKeyTransformation = TransformationInfo.transformation(
-          "map_key_access[" + mapKey + "]"
-      );
-      
-      // Add dependency with map key information
-      traverser.copyOverrideTransform(expr.child(), mapKeyTransformation).traverse();
-    } else {
-      // If key is dynamic, just track it as a transformation dependency
+
+    // Step 1: record the base column dependency without carrying any outer fieldPath,
+    // so intermediate access levels are captured cleanly.
+    traverser.copyForStrippingFieldPath(expr.child()).traverse();
+
+    // Step 2: record with the full access path using Spark's native SQL rendering, which
+    // handles all literal types (strings are quoted, nulls are NULL, dates are formatted, etc.).
+    traverser.copyWithFieldPath(expr.child(), "[" + expr.key().sql() + "]").traverse();
+
+    // Step 3: for dynamic (non-literal) keys, also record a dependency on the key expression
+    // itself so the column driving the lookup is captured in lineage.
+    if (!(expr.key() instanceof Literal)) {
       traverser.copyFor(expr.key(), TransformationInfo.transformation()).traverse();
     }
   }

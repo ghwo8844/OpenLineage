@@ -15,6 +15,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -24,7 +25,8 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
   protected Optional<Duration> timeout;
   private ExecutorService executor;
 
-  private final AtomicReference<CircuitBreakerState> lastTrip = new AtomicReference<>();
+  private final AtomicReference<CircuitBreakerState> currentEngagement = new AtomicReference<>();
+  private volatile Consumer<CircuitBreakerState> onTripListener = state -> {};
 
   public ExecutorCircuitBreaker(Integer circuitCheckIntervalInMillis) {
     this.circuitCheckIntervalInMillis = circuitCheckIntervalInMillis;
@@ -40,7 +42,7 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
 
   @Override
   public <T> T run(Callable<T> callable) {
-    if (currentState().isClosed()) {
+    if (observe(currentState()).isClosed()) {
       log.warn("CircuitBreaker closed preventing callable to be run: {}", this);
       return null;
     }
@@ -54,14 +56,11 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
                   "Starting CircuitBreaker in background {} with interval {}",
                   this,
                   getCheckIntervalMillis());
-              CircuitBreakerState circuitBreakerState = currentState();
+              CircuitBreakerState circuitBreakerState = observe(currentState());
               boolean isTimeoutExceeded = false;
               while (!circuitBreakerState.isClosed() && !isTimeoutExceeded) {
                 Thread.sleep(getCheckIntervalMillis());
-                circuitBreakerState = currentState();
-                if (circuitBreakerState.isClosed()) {
-                  lastTrip.set(circuitBreakerState);
-                }
+                circuitBreakerState = observe(currentState());
 
                 Duration runningTime = Duration.ofMillis(System.currentTimeMillis() - startTime);
                 isTimeoutExceeded =
@@ -122,7 +121,24 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
   }
 
   @Override
-  public Optional<CircuitBreakerState> consumeLastTrip() {
-    return Optional.ofNullable(lastTrip.getAndSet(null));
+  public void setOnTripListener(Consumer<CircuitBreakerState> listener) {
+    if (listener != null) {
+      this.onTripListener = listener;
+    }
+  }
+
+  private CircuitBreakerState observe(CircuitBreakerState state) {
+    if (state.isClosed()) {
+      if (currentEngagement.compareAndSet(null, state)) {
+        try {
+          onTripListener.accept(state);
+        } catch (Exception e) {
+          log.warn("Circuit breaker trip listener failed", e);
+        }
+      }
+    } else {
+      currentEngagement.set(null);
+    }
+    return state;
   }
 }

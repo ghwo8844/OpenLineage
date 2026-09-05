@@ -170,7 +170,8 @@ class HttpTransportTest {
     assertThat(thrown.getMessage()).contains("500");
     assertThat(thrown.getMessage()).contains("whoops!");
 
-    verify(http, times(1)).execute(any(), any(HttpClientResponseHandler.class));
+    // 1 call for the original RunEvent, 1 for the transport-error signal RunEvent.
+    verify(http, times(2)).execute(any(), any(HttpClientResponseHandler.class));
   }
 
   @Test
@@ -186,7 +187,8 @@ class HttpTransportTest {
 
     assertThrows(OpenLineageClientException.class, () -> client.emit(runEvent()));
 
-    verify(http, times(1)).execute(any(), any(HttpClientResponseHandler.class));
+    // 1 call for the original RunEvent, 1 for the transport-error signal RunEvent.
+    verify(http, times(2)).execute(any(), any(HttpClientResponseHandler.class));
   }
 
   @Test
