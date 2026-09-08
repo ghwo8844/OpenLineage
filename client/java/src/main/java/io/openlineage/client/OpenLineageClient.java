@@ -248,6 +248,7 @@ public final class OpenLineageClient implements AutoCloseable {
     return cutAt > 0 ? s.substring(0, cutAt) + TRUNCATION_SUFFIX : s.substring(0, maxLen);
   }
 
+  // Never throws — wraps summarize in try/catch so the original transport exception is never masked
   private static String summarizeSafe(OpenLineage.RunEvent e) {
     try {
       return String.format(
