@@ -19,6 +19,7 @@ import io.openlineage.spark.api.OpenLineageContext;
 import io.openlineage.spark3.agent.lifecycle.plan.AppendDataDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.CopyIntoCommandInputDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.CopyIntoCommandOutputDatasetBuilder;
+import io.openlineage.spark3.agent.lifecycle.plan.CreateViewDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.CreateViewInputDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.DataSourceV2RelationInputOnEndDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.DataSourceV2RelationInputOnStartDatasetBuilder;
@@ -107,7 +108,8 @@ public class Spark35DatasetBuilderFactory extends Spark32DatasetBuilderFactory
             .add(new DropTableDatasetBuilder(context))
             .add(new MergeIntoCommandEdgeOutputDatasetBuilder(context))
             .add(new AlterTableCommandDatasetBuilder(context))
-            .add(new WriteToMicroBatchDataSourceV1DatasetBuilder(context, datasetFactory));
+            .add(new WriteToMicroBatchDataSourceV1DatasetBuilder(context, datasetFactory))
+            .add(new CreateViewDatasetBuilder(context));
 
     if (ReplaceIcebergDataDatasetBuilder.hasClasses()) {
       builder.add(new ReplaceIcebergDataDatasetBuilder(context));
