@@ -8,6 +8,7 @@ package io.openlineage.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -22,8 +23,11 @@ import io.openlineage.client.OpenLineage.RunEvent;
 import io.openlineage.client.circuitBreaker.CircuitBreaker;
 import io.openlineage.client.circuitBreaker.CircuitBreakerState;
 import io.openlineage.client.transports.Transport;
+import io.openlineage.client.transports.TransportErrorRunFacet;
+import java.util.List;
 import lombok.SneakyThrows;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class OpenLineageClientTest {
 
@@ -102,5 +106,87 @@ class OpenLineageClientTest {
     when(circuitBreaker.currentState()).thenReturn(new CircuitBreakerState(false));
     client.emit(mock(DatasetEvent.class));
     verify(transport, times(1)).emit(any(DatasetEvent.class));
+  }
+
+  @Test
+  void emitRunEventEmitsTransportErrorSignalOnFailure() {
+    when(circuitBreaker.currentState()).thenReturn(new CircuitBreakerState(false));
+    RuntimeException transportError =
+        new RuntimeException("HTTP error 400: PayloadTooLargeException");
+    doThrow(transportError).doNothing().when(transport).emit(any(RunEvent.class));
+
+    RunEvent runEvent = mock(RunEvent.class);
+    RuntimeException thrown = assertThrows(RuntimeException.class, () -> client.emit(runEvent));
+    assertThat(thrown).isSameAs(transportError);
+
+    ArgumentCaptor<RunEvent> captor = ArgumentCaptor.forClass(RunEvent.class);
+    verify(transport, times(2)).emit(captor.capture());
+    List<RunEvent> events = captor.getAllValues();
+    assertThat(events.get(0)).isSameAs(runEvent);
+
+    RunEvent signal = events.get(1);
+    assertThat(signal.getJob().getNamespace()).isEqualTo("openlineage");
+    assertThat(signal.getJob().getName()).isEqualTo("transport-error");
+    assertThat(signal.getRun().getFacets().getAdditionalProperties()).containsKey("transportError");
+
+    TransportErrorRunFacet facet =
+        (TransportErrorRunFacet)
+            signal.getRun().getFacets().getAdditionalProperties().get("transportError");
+    assertThat(facet.getErrorClass()).isEqualTo("java.lang.RuntimeException");
+    assertThat(facet.getErrorMessage()).isEqualTo("HTTP error 400: PayloadTooLargeException");
+    assertThat(facet.getOriginalEvent()).contains("RunEvent");
+  }
+
+  @Test
+  void emitDatasetEventEmitsTransportErrorSignalOnFailure() {
+    when(circuitBreaker.currentState()).thenReturn(new CircuitBreakerState(false));
+    RuntimeException transportError = new RuntimeException("dataset transport boom");
+    doThrow(transportError).when(transport).emit(any(DatasetEvent.class));
+    doNothing().when(transport).emit(any(RunEvent.class));
+
+    DatasetEvent datasetEvent = mock(DatasetEvent.class);
+    assertThrows(RuntimeException.class, () -> client.emit(datasetEvent));
+
+    ArgumentCaptor<RunEvent> captor = ArgumentCaptor.forClass(RunEvent.class);
+    verify(transport, times(1)).emit(captor.capture());
+    RunEvent signal = captor.getValue();
+    assertThat(signal.getJob().getName()).isEqualTo("transport-error");
+    TransportErrorRunFacet facet =
+        (TransportErrorRunFacet)
+            signal.getRun().getFacets().getAdditionalProperties().get("transportError");
+    assertThat(facet.getOriginalEvent()).contains("DatasetEvent");
+  }
+
+  @Test
+  void emitJobEventEmitsTransportErrorSignalOnFailure() {
+    when(circuitBreaker.currentState()).thenReturn(new CircuitBreakerState(false));
+    RuntimeException transportError = new RuntimeException("job transport boom");
+    doThrow(transportError).when(transport).emit(any(JobEvent.class));
+    doNothing().when(transport).emit(any(RunEvent.class));
+
+    JobEvent jobEvent = mock(JobEvent.class);
+    assertThrows(RuntimeException.class, () -> client.emit(jobEvent));
+
+    ArgumentCaptor<RunEvent> captor = ArgumentCaptor.forClass(RunEvent.class);
+    verify(transport, times(1)).emit(captor.capture());
+    TransportErrorRunFacet facet =
+        (TransportErrorRunFacet)
+            captor.getValue().getRun().getFacets().getAdditionalProperties().get("transportError");
+    assertThat(facet.getOriginalEvent()).contains("JobEvent");
+  }
+
+  @Test
+  void transportErrorSignalFailureDoesNotPropagate() {
+    when(circuitBreaker.currentState()).thenReturn(new CircuitBreakerState(false));
+    RuntimeException transportError = new RuntimeException("transport fully broken");
+    doThrow(transportError).when(transport).emit(any(RunEvent.class));
+
+    RunEvent runEvent = mock(RunEvent.class);
+    RuntimeException thrown =
+        assertThrows(RuntimeException.class, () -> client.emit(runEvent));
+    assertThat(thrown).isSameAs(transportError);
+
+    // Two attempts: original event + signal event; signal failure was swallowed.
+    verify(transport, times(2)).emit(any(RunEvent.class));
   }
 }

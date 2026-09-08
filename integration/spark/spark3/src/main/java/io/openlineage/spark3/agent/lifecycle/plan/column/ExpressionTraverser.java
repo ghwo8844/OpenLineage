@@ -29,7 +29,10 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Count;
 
 @Slf4j
 public class ExpressionTraverser {
-  // Generally available masking expressions
+  // Expressions that obscure source values: the original values cannot be recovered from the
+  // output.
+  // Hash/digest functions and aggregate functions like Count qualify — COUNT(DISTINCT col) = N
+  // tells you nothing about which individual col values were counted.
   private static final List<Class> classes =
       Arrays.asList(
           Crc32.class,
@@ -115,15 +118,59 @@ public class ExpressionTraverser {
         this.builder);
   }
 
+  public ExpressionTraverser copyOverrideTransform(
+      Expression expression, TransformationInfo transformationInfo) {
+    return ExpressionTraverser.of(
+        expression,
+        this.outputExpressionId,
+        this.outputExpressionString,
+        transformationInfo,
+        this.builder);
+  }
+
+  /**
+   * Creates a copy for traversal with the accumulated {@code fieldPath} stripped, so it does not
+   * leak into the child's base dependency record. Uses merge semantics to preserve INDIRECT type
+   * and masking from the outer context. Used in step 1 of field-access visitors.
+   */
+  public ExpressionTraverser copyForStrippingFieldPath(Expression expression) {
+    TransformationInfo merged = this.transformationInfo.merge(TransformationInfo.transformation());
+    return copyOverrideTransform(
+        expression,
+        new TransformationInfo(
+            merged.getType(), merged.getSubType(), merged.getDescription(), merged.getMasking()));
+  }
+
+  /**
+   * Creates a copy for traversal that prepends {@code keySuffix} before the outer {@code
+   * fieldPath}, building the full access path bottom-up. Uses merge semantics to preserve INDIRECT
+   * type and masking from the outer context. Used in step 2 of field-access visitors.
+   *
+   * <p>Example: outer fieldPath {@code "[innerkey1]"} + keySuffix {@code "[key1]"} → {@code
+   * "[key1][innerkey1]"}.
+   */
+  public ExpressionTraverser copyWithFieldPath(Expression expression, String keySuffix) {
+    String outerPath = this.transformationInfo.getFieldPath();
+    String fullPath = outerPath == null ? keySuffix : keySuffix + outerPath;
+    TransformationInfo merged = this.transformationInfo.merge(TransformationInfo.transformation());
+    return copyOverrideTransform(
+        expression,
+        new TransformationInfo(
+            merged.getType(),
+            merged.getSubType(),
+            merged.getDescription(),
+            merged.getMasking(),
+            fullPath));
+  }
+
   public void traverse() {
-    if (isLeafNode()) {
+    if (expression instanceof AttributeReference) {
       AttributeReference attRef = (AttributeReference) expression;
       if (!attRef.exprId().equals(outputExpressionId)) {
         addDependency(attRef.exprId());
       }
       return;
     }
-
     for (ExpressionVisitor v : visitorFactory.expressionVisitors()) {
       if (v.isDefinedAt(expression)) {
         v.apply(expression, this);
@@ -153,10 +200,6 @@ public class ExpressionTraverser {
         inputExprId,
         outputExpressionString,
         this.transformationInfo.merge(transformationInfo));
-  }
-
-  private boolean isLeafNode() {
-    return expression instanceof AttributeReference;
   }
 
   private boolean shouldFallbackToGenericHandling() {

@@ -5,12 +5,11 @@
 
 package io.openlineage.spark3.agent.lifecycle.plan.column;
 
-import com.google.cloud.spark.bigquery.BigQueryRelation;
 import io.openlineage.client.utils.DatasetIdentifier;
 import io.openlineage.client.utils.jdbc.JdbcDatasetUtils;
+import io.openlineage.spark.agent.lifecycle.Rdds;
 import io.openlineage.spark.agent.lifecycle.plan.column.ColumnLevelLineageBuilder;
 import io.openlineage.spark.agent.lifecycle.plan.column.ColumnLevelLineageContext;
-import io.openlineage.spark.agent.util.BigQueryUtils;
 import io.openlineage.spark.agent.util.JdbcSparkUtils;
 import io.openlineage.spark.agent.util.PathUtils;
 import io.openlineage.spark.agent.util.PlanUtils;
@@ -20,6 +19,7 @@ import io.openlineage.spark3.agent.utils.ExtensionDataSourceV2Utils;
 import io.openlineage.sql.SqlMeta;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -27,6 +27,8 @@ import java.util.Properties;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hadoop.fs.Path;
+import org.apache.spark.rdd.RDD;
+import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.catalyst.catalog.HiveTableRelation;
 import org.apache.spark.sql.catalyst.expressions.AttributeReference;
@@ -35,7 +37,9 @@ import org.apache.spark.sql.catalyst.plans.logical.LeafNode;
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation;
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
 import org.apache.spark.sql.catalyst.plans.logical.OneRowRelation;
+import org.apache.spark.sql.catalyst.plans.logical.SubqueryAlias;
 import org.apache.spark.sql.catalyst.plans.logical.UnaryNode;
+import org.apache.spark.sql.catalyst.plans.logical.View;
 import org.apache.spark.sql.execution.ExternalRDD;
 import org.apache.spark.sql.execution.LogicalRDD;
 import org.apache.spark.sql.execution.columnar.InMemoryRelation;
@@ -44,6 +48,9 @@ import org.apache.spark.sql.execution.datasources.LogicalRelation;
 import org.apache.spark.sql.execution.datasources.jdbc.JDBCRelation;
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation;
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation;
+import org.apache.spark.sql.internal.SQLConf;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.ObjectType;
 
 /** Traverses LogicalPlan and collect input fields with the corresponding ExprId. */
 @Slf4j
@@ -64,6 +71,14 @@ public class InputFieldsCollector {
     } else if (plan.children() != null) {
       ScalaConversionUtils.<LogicalPlan>fromSeq(plan.children()).stream()
           .forEach(child -> collect(context, child));
+    }
+
+    // Subquery expressions (IN (SELECT ...), EXISTS, scalar) hold their inner LogicalPlan
+    // in node.expressions, not children(); the analyzed plan still has them embedded
+    // because the optimizer's RewritePredicateSubquery has not run yet.
+    if (plan.subqueries() != null) {
+      ScalaConversionUtils.<LogicalPlan>fromSeq(plan.subqueries()).stream()
+          .forEach(subPlan -> collect(context, subPlan));
     }
   }
 
@@ -117,7 +132,14 @@ public class InputFieldsCollector {
                   .filter(attr -> attr instanceof AttributeReference)
                   .map(attr -> (AttributeReference) attr)
                   .collect(Collectors.toList())
-                  .forEach(attr -> builder.addInput(attr.exprId(), di, attr.name()));
+                  .forEach(
+                      attr ->
+                          builder.addInput(
+                              attr.exprId(),
+                              di,
+                              attr.name(),
+                              attr.dataType().typeName() // Use same approach as schema facet
+                              ));
             });
   }
 
@@ -137,11 +159,6 @@ public class InputFieldsCollector {
       HadoopFsRelation relation = (HadoopFsRelation) ((LogicalRelation) node).relation();
       return extractDatasetIdentifier(relation);
     } else if (node instanceof LogicalRelation
-        && BigQueryUtils.hasBigQueryClasses()
-        && ((LogicalRelation) node).relation() instanceof BigQueryRelation) {
-      BigQueryRelation relation = (BigQueryRelation) ((LogicalRelation) node).relation();
-      return BigQueryUtils.extractDatasetIdentifier(relation);
-    } else if (node instanceof LogicalRelation
         && ((LogicalRelation) node).relation() instanceof JDBCRelation) {
       JDBCRelation relation = (JDBCRelation) ((LogicalRelation) node).relation();
       return extractDatasetIdentifier(context, relation);
@@ -151,20 +168,69 @@ public class InputFieldsCollector {
             .getSparkExtensionVisitorWrapper()
             .isDefinedAt(((LogicalRelation) node).relation())) {
       return extractExtensionDatasetIdentifier(context, (LogicalRelation) node);
+    } else if (node instanceof SubqueryAlias) {
+      if (isViewSubqueryAlias(node)) {
+        SubqueryAlias alias = (SubqueryAlias) node;
+        List<String> qualifier = ScalaConversionUtils.fromSeq(alias.identifier().qualifier());
+        return extractViewDatasetIdentifier(qualifier, alias.identifier().name());
+      }
+      // plain user alias or qualified table reference — fall through, children provide the input
+    } else if (node instanceof View) {
+      return extractDatasetIdentifier(context, (View) node);
     } else if (node instanceof InMemoryRelation) {
       // implemented in
       // io.openlineage.spark3.agent.lifecycle.plan.column.ColumnLevelLineageUtils.collectInputsAndExpressionDependencies
       // requires merging multiple LogicalPlans
-    } else if (node instanceof OneRowRelation
-        || node instanceof LocalRelation
-        || node instanceof ExternalRDD
-        || node instanceof LogicalRDD) {
-      // skip without warning
+    } else if (node instanceof LogicalRDD) {
+      return extractOpaqueSourceDatasetIdentifier((LogicalRDD) node);
+    } else if (node instanceof OneRowRelation) {
+      return extractOpaqueSourceDatasetIdentifier((OneRowRelation) node);
+    } else if (node instanceof LocalRelation) {
+      return extractOpaqueSourceDatasetIdentifier((LocalRelation) node);
+    } else if (node instanceof ExternalRDD) {
+      return extractOpaqueSourceDatasetIdentifier((ExternalRDD<?>) node);
     } else if (node instanceof LeafNode) {
       log.warn("Could not extract dataset identifier from {}", node.getClass().getCanonicalName());
     }
 
     return Collections.emptyList();
+  }
+
+  private static List<DatasetIdentifier> extractOpaqueSourceDatasetIdentifier(OneRowRelation node) {
+    return opaqueSourceDatasetIdentifier(node, node.getClass().getSimpleName());
+  }
+
+  private static List<DatasetIdentifier> extractOpaqueSourceDatasetIdentifier(LocalRelation node) {
+    String streaming = node.isStreaming() ? ",streaming" : "";
+    String name = node.getClass().getSimpleName() + "(rows=" + node.data().size() + streaming + ")";
+    return opaqueSourceDatasetIdentifier(node, name);
+  }
+
+  private static List<DatasetIdentifier> extractOpaqueSourceDatasetIdentifier(ExternalRDD<?> node) {
+    DataType dt = node.outputObjAttr().dataType();
+    String typeName =
+        (dt instanceof ObjectType) ? ((ObjectType) dt).cls().getSimpleName() : dt.typeName();
+    String streaming = node.isStreaming() ? ",streaming" : "";
+    String name = node.getClass().getSimpleName() + "(type=" + typeName + streaming + ")";
+    return opaqueSourceDatasetIdentifier(node, name);
+  }
+
+  private static List<DatasetIdentifier> extractOpaqueSourceDatasetIdentifier(LogicalRDD node) {
+    List<RDD<?>> fileLikeRdds = Rdds.findFileLikeRdds(node.rdd());
+    List<DatasetIdentifier> identifiers = PlanUtils.findDatasetIdentifiers(fileLikeRdds);
+    if (!identifiers.isEmpty()) {
+      return identifiers.stream()
+          .map(di -> new DatasetIdentifier(di.getName(), "opaque-source:" + di.getNamespace()))
+          .collect(Collectors.toList());
+    }
+    String name = node.getClass().getSimpleName() + (node.isStreaming() ? "(streaming)" : "");
+    return opaqueSourceDatasetIdentifier(node, name);
+  }
+
+  private static List<DatasetIdentifier> opaqueSourceDatasetIdentifier(
+      LogicalPlan node, String name) {
+    return Collections.singletonList(
+        new DatasetIdentifier(name, "opaque-source:" + node.getClass().getName()));
   }
 
   static List<DatasetIdentifier> extractDatasetIdentifier(
@@ -226,6 +292,138 @@ public class InputFieldsCollector {
     }
 
     return inputDatasets;
+  }
+
+  /**
+   * Returns true when a SubqueryAlias was produced by Hive virtual view inlining rather than a
+   * plain user alias or a qualified table reference. Hive virtual views always have a non-empty
+   * qualifier (catalog + schema path) and a body that is NOT a direct table-leaf node. Uses a
+   * negative exclusion of known leaf types rather than a positive structural assertion (e.g. "child
+   * instanceof Project") so that UNION ALL, DISTINCT, and TABLE views are also matched.
+   */
+  static boolean isViewSubqueryAlias(LogicalPlan plan) {
+    if (!(plan instanceof SubqueryAlias)) return false;
+    SubqueryAlias alias = (SubqueryAlias) plan;
+    if (ScalaConversionUtils.fromSeq(alias.identifier().qualifier()).isEmpty()) return false;
+    LogicalPlan child = alias.child();
+    return !(child instanceof HiveTableRelation)
+        && !(child instanceof LogicalRelation)
+        && !(child instanceof DataSourceV2Relation)
+        && !(child instanceof DataSourceV2ScanRelation)
+        && !(child instanceof InMemoryRelation);
+  }
+
+  private static List<DatasetIdentifier> extractViewDatasetIdentifier(
+      List<String> qualifier, String name) {
+    List<String> allParts = new ArrayList<>(qualifier);
+    allParts.add(name);
+    return Collections.singletonList(new DatasetIdentifier(String.join(".", allParts), "View"));
+  }
+
+  private static List<DatasetIdentifier> extractDatasetIdentifier(
+      ColumnLevelLineageContext context, View view) {
+    try {
+      Object v2ViewDesc = view.getClass().getMethod("desc").invoke(view);
+      Object identifier = v2ViewDesc.getClass().getMethod("identifier").invoke(v2ViewDesc);
+      String viewType = view.isTempView() ? "TempView" : "View";
+
+      Optional<String> catalog = Optional.empty();
+      Optional<String> database = Optional.empty();
+      String table;
+
+      if (identifier instanceof String) {
+        Optional<List<String>> parsedOpt =
+            context
+                .getOlContext()
+                .getSparkSession()
+                .map(
+                    s -> {
+                      try {
+                        return ScalaConversionUtils.<String>fromSeq(
+                            s.sessionState()
+                                .sqlParser()
+                                .parseMultipartIdentifier((String) identifier));
+                      } catch (Exception e) {
+                        log.debug(
+                            "Could not parse view identifier '{}' via sqlParser; falling back to dot-split",
+                            identifier,
+                            e);
+                        return Arrays.asList(((String) identifier).split("\\."));
+                      }
+                    });
+        List<String> parts =
+            parsedOpt.orElseGet(() -> Arrays.asList(((String) identifier).split("\\.")));
+        if (parts.size() >= 3) {
+          return Collections.singletonList(
+              new DatasetIdentifier(String.join(".", parts), viewType));
+        } else if (parts.size() == 2) {
+          database = Optional.of(parts.get(0));
+          table = parts.get(1);
+        } else if (!parts.isEmpty()) {
+          table = parts.get(0);
+        } else {
+          return Collections.emptyList();
+        }
+      } else if (identifier instanceof TableIdentifier) {
+        TableIdentifier ti = (TableIdentifier) identifier;
+        try {
+          Object catalogOpt = ti.getClass().getMethod("catalog").invoke(ti);
+          if ((Boolean) catalogOpt.getClass().getMethod("isDefined").invoke(catalogOpt)) {
+            catalog =
+                Optional.of((String) catalogOpt.getClass().getMethod("get").invoke(catalogOpt));
+          }
+        } catch (Exception ignored) {
+        }
+        if (ti.database().isDefined()) database = Optional.of(ti.database().get());
+        table = ti.table();
+      } else {
+        return Collections.emptyList();
+      }
+
+      return Collections.singletonList(
+          new DatasetIdentifier(
+              String.join(".", resolveViewParts(context, catalog, database, table)), viewType));
+    } catch (Exception e) {
+      log.debug("Could not extract dataset identifier from View", e);
+      return Collections.emptyList();
+    }
+  }
+
+  private static List<String> resolveViewParts(
+      ColumnLevelLineageContext context,
+      Optional<String> catalog,
+      Optional<String> database,
+      String table) {
+    List<String> parts = new ArrayList<>();
+    if (catalog.isPresent()) {
+      parts.add(catalog.get());
+    } else {
+      context
+          .getOlContext()
+          .getSparkSession()
+          .map(
+              s ->
+                  SQLConf.withExistingConf(
+                      s.sessionState().conf(),
+                      () -> s.sessionState().catalogManager().currentCatalog().name()))
+          .ifPresent(parts::add);
+    }
+    if (database.isPresent()) {
+      parts.add(database.get());
+    } else {
+      context
+          .getOlContext()
+          .getSparkSession()
+          .ifPresent(
+              s ->
+                  Collections.addAll(
+                      parts,
+                      SQLConf.withExistingConf(
+                          s.sessionState().conf(),
+                          () -> s.sessionState().catalogManager().currentNamespace())));
+    }
+    parts.add(table);
+    return parts;
   }
 
   private static List<DatasetIdentifier> extractExtensionDatasetIdentifier(

@@ -11,6 +11,8 @@ import static io.openlineage.client.utils.TransformationInfo.Subtypes.GROUP_BY;
 import static io.openlineage.client.utils.TransformationInfo.Subtypes.SORT;
 import static io.openlineage.client.utils.TransformationInfo.Subtypes.WINDOW;
 import static io.openlineage.spark.agent.column.ColumnLevelLineageTestUtils.*;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -26,7 +28,14 @@ import io.openlineage.spark.api.OpenLineageContext;
 import io.openlineage.spark.api.SparkOpenLineageConfig;
 import io.openlineage.spark3.agent.lifecycle.plan.column.ColumnLevelLineageUtils;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.stream.Collectors;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.sql.RowFactory;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructType;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hadoop.fs.FileSystem;
@@ -790,6 +799,52 @@ class ColumnLineageWithTransformationTypesTest {
                 + "FROM t1");
 
     assertCountDatasetDependencies(facet, 0);
+  }
+
+  @Test
+  void columnLineageIsEmittedForOpaqueRDDSource() {
+    JavaSparkContext jsc = new JavaSparkContext(spark.sparkContext());
+    List<Row> rows =
+        Collections.singletonList(RowFactory.create("ramp1", 42));
+    JavaRDD<Row> javaRDD = jsc.parallelize(rows, 1);
+
+    StructType schema =
+        new StructType()
+            .add("maintained_ramp_id", DataTypes.StringType, false)
+            .add("value", DataTypes.IntegerType, false);
+
+    Dataset<Row> df = spark.createDataFrame(javaRDD, schema);
+    df.createOrReplaceTempView("rdd_opaque_view");
+
+    OpenLineage.ColumnLineageDatasetFacet facet =
+        getFacetForQuery(
+            getSchemaFacet("maintained_ramp_id;string", "value;int"),
+            "SELECT maintained_ramp_id, value FROM rdd_opaque_view");
+
+    // Column lineage must be emitted even when the source is an opaque RDD (no catalog entry)
+    assertFalse(
+        facet.getFields().getAdditionalProperties().isEmpty(),
+        "Column lineage should be emitted for opaque RDD sources");
+
+    assertTrue(
+        facet.getFields().getAdditionalProperties().containsKey("maintained_ramp_id"),
+        "Output field 'maintained_ramp_id' should appear in column lineage");
+
+    List<OpenLineage.InputField> inputFields =
+        facet
+            .getFields()
+            .getAdditionalProperties()
+            .get("maintained_ramp_id")
+            .getInputFields();
+    assertFalse(inputFields.isEmpty(), "maintained_ramp_id should have at least one input field");
+
+    assertTrue(
+        inputFields.stream().anyMatch(f -> f.getField().equalsIgnoreCase("maintained_ramp_id")),
+        "Input field for maintained_ramp_id should reference the same source column");
+    assertTrue(
+        inputFields.stream()
+            .anyMatch(f -> f.getNamespace().startsWith("opaque-source:")),
+        "Input namespace should indicate an opaque source");
   }
 
   @NotNull

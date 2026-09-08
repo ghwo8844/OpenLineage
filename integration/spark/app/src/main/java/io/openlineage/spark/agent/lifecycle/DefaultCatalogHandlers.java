@@ -15,6 +15,7 @@ import io.openlineage.spark3.agent.lifecycle.plan.catalog.DeltaHandler;
 import io.openlineage.spark3.agent.lifecycle.plan.catalog.JdbcHandler;
 import io.openlineage.spark3.agent.lifecycle.plan.catalog.V2SessionCatalogHandler;
 import io.openlineage.spark3.agent.lifecycle.plan.catalog.iceberg.IcebergHandler;
+import io.openlineage.spark3.agent.lifecycle.plan.catalog.iceberg.NetflixIcebergHandler;
 import java.util.List;
 
 /** Catalog handlers available to every Spark 3.x / 4.x version. */
@@ -23,6 +24,8 @@ final class DefaultCatalogHandlers {
 
   static List<CatalogHandler> list(OpenLineageContext context) {
     return ImmutableList.of(
+        // register our custom netflix handler that works with NetflixSparkCatalog
+        new NetflixIcebergHandler(context),
         new IcebergHandler(context),
         new DeltaHandler(context),
         new ClickHouseHandler(context),

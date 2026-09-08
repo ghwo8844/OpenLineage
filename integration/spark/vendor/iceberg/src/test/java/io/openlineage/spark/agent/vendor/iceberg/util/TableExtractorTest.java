@@ -42,7 +42,7 @@ class TableExtractorTest {
 
   private static Stream<Object[]> provideTableNamesAndExpectedIdentifiers() {
     return Stream.of(
-        new Object[] {"catalog.database.table", tableIdentifierOf("database", "table")},
+        new Object[] {"catalog.database.table", tableIdentifierOf("catalog.database", "table")},
         new Object[] {"database.table", tableIdentifierOf("database", "table")},
         new Object[] {"table", tableIdentifierOf(null, "table")});
   }

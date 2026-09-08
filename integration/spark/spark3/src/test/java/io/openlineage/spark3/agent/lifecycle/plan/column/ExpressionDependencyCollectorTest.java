@@ -32,6 +32,9 @@ import org.apache.spark.sql.catalyst.expressions.Coalesce;
 import org.apache.spark.sql.catalyst.expressions.EqualTo;
 import org.apache.spark.sql.catalyst.expressions.ExprId;
 import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.catalyst.expressions.GetArrayItem;
+import org.apache.spark.sql.catalyst.expressions.GetMapValue;
+import org.apache.spark.sql.catalyst.expressions.GetStructField;
 import org.apache.spark.sql.catalyst.expressions.GreaterThan;
 import org.apache.spark.sql.catalyst.expressions.If;
 import org.apache.spark.sql.catalyst.expressions.Literal;
@@ -50,8 +53,13 @@ import org.apache.spark.sql.catalyst.plans.logical.JoinHint;
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
 import org.apache.spark.sql.catalyst.plans.logical.Project;
 import org.apache.spark.sql.catalyst.plans.logical.Sort;
+import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.IntegerType$;
 import org.apache.spark.sql.types.Metadata$;
+import org.apache.spark.sql.types.StringType$;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
+import org.apache.spark.unsafe.types.UTF8String;
 import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -372,6 +380,348 @@ class ExpressionDependencyCollectorTest {
     verifyNoMoreInteractions(builder);
   }
 
+  @Test
+  void testCollectCoalesceWithLiteralFallback() {
+    // COALESCE(col, 0) — common pattern after LEFT JOIN where the literal default has no lineage
+    Coalesce coalesceExpr =
+        new Coalesce(
+            getExpressionSeq((Expression) expression1, new Literal(0, IntegerType$.MODULE$)));
+    Alias res = alias(exprId3, ALIAS_NAME, coalesceExpr);
+    Project project = new Project(getNamedExpressionSeq(res), mock(LogicalPlan.class));
+    LogicalPlan plan = new CreateTableAsSelect(null, null, null, project, null, null, false);
+    ExpressionDependencyCollector.collect(context, plan);
+
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            TransformationInfo.indirect(
+                TransformationInfo.Subtypes.CONDITIONAL, "coalesce(name1, 0) AS res"));
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            TransformationInfo.transformation("coalesce(name1, 0) AS res"));
+    verifyNoMoreInteractions(builder);
+  }
+
+  @Test
+  void testNestedMapAccessBuildsCumulativeFieldPath() {
+    // mapcol['key1']['innerkey1'] — AST: GetMapValue(GetMapValue(mapcol, key1), innerkey1)
+    // mapcol type: Map<String, Map<String, String>> to match two-level access
+    AttributeReference mapcol =
+        new AttributeReference(
+            "mapcol",
+            DataTypes.createMapType(
+                DataTypes.StringType,
+                DataTypes.createMapType(DataTypes.StringType, DataTypes.StringType)),
+            false,
+            Metadata$.MODULE$.empty(),
+            exprId1,
+            ScalaConversionUtils.asScalaSeqEmpty());
+    Literal key1 = new Literal(UTF8String.fromString("key1"), StringType$.MODULE$);
+    Literal innerkey1 = new Literal(UTF8String.fromString("innerkey1"), StringType$.MODULE$);
+    GetMapValue innerAccess = new GetMapValue(mapcol, key1);
+    GetMapValue outerAccess = new GetMapValue(innerAccess, innerkey1);
+
+    Alias alias = alias(exprId3, ALIAS_NAME, outerAccess);
+    Project project = new Project(getNamedExpressionSeq(alias), mock(LogicalPlan.class));
+    LogicalPlan plan = new CreateTableAsSelect(null, null, null, project, null, null, false);
+
+    ExpressionDependencyCollector.collect(context, plan);
+
+    // Intermediate access: ['key1']
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "mapcol['key1']['innerkey1'] AS res",
+                false,
+                "['key1']"));
+    // Full nested path: ['key1']['innerkey1']
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "mapcol['key1']['innerkey1'] AS res",
+                false,
+                "['key1']['innerkey1']"));
+    // The spurious ['innerkey1']-only entry must NOT appear
+    verify(builder, Mockito.never())
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "mapcol['key1']['innerkey1'] AS res",
+                false,
+                "['innerkey1']"));
+  }
+
+  @Test
+  void testNestedStructAccessBuildsCumulativeFieldPath() {
+    // structcol.field1.field2 — AST: GetStructField(GetStructField(structcol, 0/*field1*/),
+    // 0/*field2*/)
+    StructType innerType =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("field2", DataTypes.StringType, true)});
+    StructType outerType =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("field1", innerType, true)});
+    AttributeReference structcol = structField("structcol", outerType, exprId1);
+    GetStructField getField1 = new GetStructField(structcol, 0, Option.empty());
+    GetStructField getField2 = new GetStructField(getField1, 0, Option.empty());
+
+    Alias alias = alias(exprId3, ALIAS_NAME, getField2);
+    Project project = new Project(getNamedExpressionSeq(alias), mock(LogicalPlan.class));
+    LogicalPlan plan = new CreateTableAsSelect(null, null, null, project, null, null, false);
+
+    ExpressionDependencyCollector.collect(context, plan);
+
+    // Intermediate access: .field1
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "structcol.`field1`.`field2` AS res",
+                false,
+                ".field1"));
+    // Full nested path: .field1.field2
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "structcol.`field1`.`field2` AS res",
+                false,
+                ".field1.field2"));
+    // The spurious .field2-only entry must NOT appear
+    verify(builder, Mockito.never())
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "structcol.`field1`.`field2` AS res",
+                false,
+                ".field2"));
+  }
+
+  @Test
+  void testCrossTypeNestedAccessMapThenStruct() {
+    // mapcol['key1'].field — AST: GetStructField(GetMapValue(mapcol_map_to_struct, key1), 0)
+    StructType valueType =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("field", DataTypes.StringType, true)});
+    // mapcol has type Map<String, StructType{field: String}>
+    AttributeReference mapcol =
+        new AttributeReference(
+            "mapcol",
+            DataTypes.createMapType(DataTypes.StringType, valueType),
+            false,
+            Metadata$.MODULE$.empty(),
+            exprId1,
+            ScalaConversionUtils.asScalaSeqEmpty());
+    Literal key1 = new Literal(UTF8String.fromString("key1"), StringType$.MODULE$);
+    // mapAccess.dataType = valueType (StructType) — childSchema() will resolve "field"
+    GetMapValue mapAccess = new GetMapValue(mapcol, key1);
+    GetStructField structAccess = new GetStructField(mapAccess, 0, Option.empty());
+
+    Alias alias = alias(exprId3, ALIAS_NAME, structAccess);
+    Project project = new Project(getNamedExpressionSeq(alias), mock(LogicalPlan.class));
+    LogicalPlan plan = new CreateTableAsSelect(null, null, null, project, null, null, false);
+
+    ExpressionDependencyCollector.collect(context, plan);
+
+    // Intermediate: ['key1'] from the map access
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "mapcol['key1'].`field` AS res",
+                false,
+                "['key1']"));
+    // Full cross-type path: ['key1'].field
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "mapcol['key1'].`field` AS res",
+                false,
+                "['key1'].field"));
+  }
+
+  @Test
+  void testMapAccessWithDynamicColumnKeyRecordsColumnName() {
+    // scores[key_col] — dynamic key: fieldPath = [key_col] via expr.key().sql(), plus dependency on
+    // key_col
+    AttributeReference scores =
+        new AttributeReference(
+            "scores",
+            DataTypes.createMapType(DataTypes.StringType, DataTypes.IntegerType),
+            false,
+            Metadata$.MODULE$.empty(),
+            exprId1,
+            ScalaConversionUtils.asScalaSeqEmpty());
+    AttributeReference keyCol =
+        new AttributeReference(
+            "key_col",
+            DataTypes.StringType,
+            false,
+            Metadata$.MODULE$.empty(),
+            exprId2,
+            ScalaConversionUtils.asScalaSeqEmpty());
+    GetMapValue mapAccess = new GetMapValue(scores, keyCol);
+
+    Alias alias = alias(exprId3, ALIAS_NAME, mapAccess);
+    Project project = new Project(getNamedExpressionSeq(alias), mock(LogicalPlan.class));
+    LogicalPlan plan = new CreateTableAsSelect(null, null, null, project, null, null, false);
+
+    ExpressionDependencyCollector.collect(context, plan);
+
+    // Map column gets fieldPath = [key_col]
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "scores[key_col] AS res",
+                false,
+                "[key_col]"));
+    // Key column itself is also a TRANSFORMATION dependency
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId2,
+            ALIAS_NAME,
+            TransformationInfo.transformation("scores[key_col] AS res"));
+  }
+
+  @Test
+  void testArrayAccessEmitsSentinelFieldPath() {
+    // arraycol[5] — actual index value is NOT emitted; sentinel "[0]" is used
+    AttributeReference arraycol =
+        new AttributeReference(
+            "arraycol",
+            DataTypes.createArrayType(DataTypes.StringType),
+            false,
+            Metadata$.MODULE$.empty(),
+            exprId1,
+            ScalaConversionUtils.asScalaSeqEmpty());
+    GetArrayItem arrayAccess =
+        new GetArrayItem(arraycol, new Literal(5, IntegerType$.MODULE$), true);
+
+    Alias alias = alias(exprId3, ALIAS_NAME, arrayAccess);
+    Project project = new Project(getNamedExpressionSeq(alias), mock(LogicalPlan.class));
+    LogicalPlan plan = new CreateTableAsSelect(null, null, null, project, null, null, false);
+
+    ExpressionDependencyCollector.collect(context, plan);
+
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "arraycol[5] AS res",
+                false,
+                "[0]"));
+  }
+
+  @Test
+  void testNestedArrayAccessBuildsCumulativeFieldPath() {
+    // arraycol[0][1] — both levels collapse to "[0]" sentinel
+    AttributeReference arraycol =
+        new AttributeReference(
+            "arraycol",
+            DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.StringType)),
+            false,
+            Metadata$.MODULE$.empty(),
+            exprId1,
+            ScalaConversionUtils.asScalaSeqEmpty());
+    GetArrayItem innerAccess =
+        new GetArrayItem(arraycol, new Literal(0, IntegerType$.MODULE$), true);
+    GetArrayItem outerAccess =
+        new GetArrayItem(innerAccess, new Literal(1, IntegerType$.MODULE$), true);
+
+    Alias alias = alias(exprId3, ALIAS_NAME, outerAccess);
+    Project project = new Project(getNamedExpressionSeq(alias), mock(LogicalPlan.class));
+    LogicalPlan plan = new CreateTableAsSelect(null, null, null, project, null, null, false);
+
+    ExpressionDependencyCollector.collect(context, plan);
+
+    // Intermediate: [0]
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "arraycol[0][1] AS res",
+                false,
+                "[0]"));
+    // Full nested path: [0][0]
+    verify(builder, times(1))
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "arraycol[0][1] AS res",
+                false,
+                "[0][0]"));
+    // The spurious "[1]"-only entry must NOT appear
+    verify(builder, Mockito.never())
+        .addDependency(
+            exprId3,
+            exprId1,
+            ALIAS_NAME,
+            new TransformationInfo(
+                TransformationInfo.Types.DIRECT,
+                TransformationInfo.Subtypes.TRANSFORMATION,
+                "arraycol[0][1] AS res",
+                false,
+                "[1]"));
+  }
+
   private static Seq<NamedExpression> getNamedExpressionSeq(NamedExpression... expressions) {
     return ScalaConversionUtils.fromList(Arrays.stream(expressions).collect(Collectors.toList()));
   }
@@ -385,6 +735,16 @@ class ExpressionDependencyCollectorTest {
     return new AttributeReference(
         name,
         IntegerType$.MODULE$,
+        false,
+        Metadata$.MODULE$.empty(),
+        exprId,
+        ScalaConversionUtils.asScalaSeqEmpty());
+  }
+
+  private static AttributeReference structField(String name, StructType type, ExprId exprId) {
+    return new AttributeReference(
+        name,
+        type,
         false,
         Metadata$.MODULE$.empty(),
         exprId,

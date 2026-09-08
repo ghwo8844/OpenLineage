@@ -13,10 +13,14 @@ import io.openlineage.client.circuitBreaker.CircuitBreaker;
 import io.openlineage.client.metrics.MicrometerProvider;
 import io.openlineage.client.transports.ConsoleTransport;
 import io.openlineage.client.transports.Transport;
+import io.openlineage.client.transports.TransportErrorRunFacet;
 import java.time.Duration;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.NonNull;
@@ -102,7 +106,12 @@ public final class OpenLineageClient implements AutoCloseable {
       engagedCircuitBreaker.set(0);
     }
     emitStart.increment();
-    emitTime.record(emit);
+    try {
+      emitTime.record(emit);
+    } catch (RuntimeException e) {
+      emitTransportErrorSignal(summarizeSafe(runEvent), e);
+      throw e;
+    }
     emitComplete.increment();
   }
 
@@ -126,7 +135,12 @@ public final class OpenLineageClient implements AutoCloseable {
       engagedCircuitBreaker.set(0);
     }
     emitStart.increment();
-    emitTime.record(() -> transport.emit(datasetEvent));
+    try {
+      emitTime.record(() -> transport.emit(datasetEvent));
+    } catch (RuntimeException e) {
+      emitTransportErrorSignal(summarizeSafe(datasetEvent), e);
+      throw e;
+    }
     emitComplete.increment();
   }
 
@@ -149,7 +163,12 @@ public final class OpenLineageClient implements AutoCloseable {
       engagedCircuitBreaker.set(0);
     }
     emitStart.increment();
-    emitTime.record(() -> transport.emit(jobEvent));
+    try {
+      emitTime.record(() -> transport.emit(jobEvent));
+    } catch (RuntimeException e) {
+      emitTransportErrorSignal(summarizeSafe(jobEvent), e);
+      throw e;
+    }
     emitComplete.increment();
   }
 
@@ -164,7 +183,9 @@ public final class OpenLineageClient implements AutoCloseable {
         this.meterRegistry.gauge(
             "openlineage.circuitbreaker.engaged",
             Collections.singletonList(
-                Tag.of("openlineage.circuitbreaker", circuitBreaker.getClass().getName())),
+                Tag.of(
+                    "openlineage.circuitbreaker",
+                    circuitBreaker.map(cb -> cb.getClass().getSimpleName()).orElse("none"))),
             new AtomicInteger(0));
     emitTime =
         this.meterRegistry.timer(
@@ -182,6 +203,84 @@ public final class OpenLineageClient implements AutoCloseable {
       circuitBreaker.ifPresent(CircuitBreaker::close);
       meterRegistry.close();
       OpenLineageClientUtils.getExecutor().ifPresent(ExecutorService::shutdown);
+    }
+  }
+
+  private void emitTransportErrorSignal(String originalEventSummary, Throwable error) {
+    try {
+      transport.emit(buildTransportErrorSignal(originalEventSummary, error));
+    } catch (Exception signalFailure) {
+      log.warn("Failed to emit transport error signal for {}", originalEventSummary, signalFailure);
+    }
+  }
+
+  private static OpenLineage.RunEvent buildTransportErrorSignal(
+      String originalEventSummary, Throwable error) {
+    OpenLineage ol = new OpenLineage(TransportErrorRunFacet.PRODUCER_URI);
+    OpenLineage.RunFacets runFacets =
+        ol.newRunFacetsBuilder()
+            .put(
+                "transportError",
+                new TransportErrorRunFacet(
+                    error.getClass().getName(),
+                    truncate(error.getMessage(), MAX_ERROR_MESSAGE_LENGTH),
+                    originalEventSummary))
+            .build();
+    return ol.newRunEventBuilder()
+        .eventTime(ZonedDateTime.now(ZoneOffset.UTC))
+        .eventType(OpenLineage.RunEvent.EventType.OTHER)
+        .run(ol.newRun(UUID.randomUUID(), runFacets))
+        .job(ol.newJob("openlineage", "transport-error", ol.newJobFacetsBuilder().build()))
+        .build();
+  }
+
+  private static final String TRUNCATION_SUFFIX = "...[truncated]";
+  private static final int MAX_ERROR_MESSAGE_LENGTH = 4096;
+
+  private static String truncate(String s, int maxLen) {
+    if (s == null) {
+      return null;
+    }
+    if (s.length() <= maxLen) {
+      return s;
+    }
+    int cutAt = maxLen - TRUNCATION_SUFFIX.length();
+    return cutAt > 0 ? s.substring(0, cutAt) + TRUNCATION_SUFFIX : s.substring(0, maxLen);
+  }
+
+  // Never throws — wraps summarize in try/catch so the original transport exception is never masked
+  private static String summarizeSafe(OpenLineage.RunEvent e) {
+    try {
+      return String.format(
+          "RunEvent[runId=%s, job=%s/%s, eventType=%s]",
+          e.getRun() != null ? e.getRun().getRunId() : null,
+          e.getJob() != null ? e.getJob().getNamespace() : null,
+          e.getJob() != null ? e.getJob().getName() : null,
+          e.getEventType());
+    } catch (Exception ignored) {
+      return "RunEvent[unparseable]";
+    }
+  }
+
+  private static String summarizeSafe(OpenLineage.DatasetEvent e) {
+    try {
+      return String.format(
+          "DatasetEvent[dataset=%s/%s]",
+          e.getDataset() != null ? e.getDataset().getNamespace() : null,
+          e.getDataset() != null ? e.getDataset().getName() : null);
+    } catch (Exception ignored) {
+      return "DatasetEvent[unparseable]";
+    }
+  }
+
+  private static String summarizeSafe(OpenLineage.JobEvent e) {
+    try {
+      return String.format(
+          "JobEvent[job=%s/%s]",
+          e.getJob() != null ? e.getJob().getNamespace() : null,
+          e.getJob() != null ? e.getJob().getName() : null);
+    } catch (Exception ignored) {
+      return "JobEvent[unparseable]";
     }
   }
 

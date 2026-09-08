@@ -24,6 +24,7 @@ import io.openlineage.spark3.agent.lifecycle.plan.AppendDataDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.CopyIntoCommandInputDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.CopyIntoCommandOutputDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.CreateReplaceDatasetBuilder;
+import io.openlineage.spark3.agent.lifecycle.plan.CreateViewInputDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.DataSourceV2RelationInputOnEndDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.DataSourceV2RelationInputOnStartDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.DataSourceV2RelationOutputDatasetBuilder;
@@ -76,6 +77,7 @@ public class Spark32DatasetBuilderFactory implements DatasetBuilderFactory {
             .add(new UpdateCommandInputDatasetBuilder(context))
             .add(new CopyIntoCommandInputDatasetBuilder(context))
             .add(new ViewInputDatasetBuilder(context))
+            .add(new CreateViewInputDatasetBuilder(context))
             .add(new DataSourceV2RelationInputOnStartDatasetBuilder(context, datasetFactory))
             .add(new DataSourceV2RelationInputOnEndDatasetBuilder(context, datasetFactory));
 

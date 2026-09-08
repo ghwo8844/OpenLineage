@@ -7,14 +7,15 @@ package io.openlineage.spark.agent.lifecycle.plan.column;
 
 import static io.openlineage.client.utils.SnowflakeUtils.stripQuotes;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.openlineage.spark.shaded.com.fasterxml.jackson.core.JsonProcessingException;
+import io.openlineage.spark.shaded.com.fasterxml.jackson.databind.ObjectMapper;
 import io.openlineage.client.OpenLineage;
 import io.openlineage.client.OpenLineage.ColumnLineageDatasetFacetFields;
 import io.openlineage.client.OpenLineage.ColumnLineageDatasetFacetFieldsAdditionalBuilder;
 import io.openlineage.client.OpenLineage.SchemaDatasetFacetFields;
 import io.openlineage.client.OpenLineageClientUtils;
 import io.openlineage.client.utils.DatasetIdentifier;
+import io.openlineage.client.utils.DatasetIdentifier.Symlink;
 import io.openlineage.client.utils.TransformationInfo;
 import io.openlineage.spark.agent.util.DatasetReducerUtils;
 import io.openlineage.spark.api.ColumnLineageConfig;
@@ -79,13 +80,26 @@ public class ColumnLevelLineageBuilder {
    * @param attributeName
    */
   public void addInput(ExprId exprId, DatasetIdentifier datasetIdentifier, String attributeName) {
+    addInput(exprId, datasetIdentifier, attributeName, null);
+  }
+
+  /**
+   * Adds input field with type information.
+   *
+   * @param exprId
+   * @param datasetIdentifier
+   * @param attributeName
+   * @param attributeType
+   */
+  public void addInput(ExprId exprId, DatasetIdentifier datasetIdentifier, String attributeName, String attributeType) {
     inputs.computeIfAbsent(exprId, k -> new HashSet<>());
     inputs
         .get(exprId)
         .add(
             new Input(
                 DatasetReducerUtils.trimDatasetIdentifier(context, datasetIdentifier),
-                attributeName));
+                attributeName,
+                attributeType));
   }
 
   /**
@@ -271,7 +285,7 @@ public class ColumnLevelLineageBuilder {
             pair ->
                 fieldsBuilder.put(
                     pair.getLeft().getName(),
-                    additionalBuilder.inputFields(pair.getRight()).build()));
+                    additionalBuilder.inputFields(pair.getRight()).put("type", pair.getLeft().getType()).build()));
 
     return fieldsBuilder.build();
   }
@@ -286,18 +300,44 @@ public class ColumnLevelLineageBuilder {
 
     return combinedInputs.entrySet().stream()
         .map(
-            field ->
-                new OpenLineage.InputFieldBuilder()
-                    .namespace(field.getKey().getDatasetIdentifier().getNamespace())
-                    .name(field.getKey().getDatasetIdentifier().getName())
+            field -> {
+                OpenLineage.InputFieldBuilder builder = new OpenLineage.InputFieldBuilder()
+                    .namespace(getTableNamespace(field.getKey().getDatasetIdentifier()))
+                    .name(getTableName(field.getKey().getDatasetIdentifier()))
                     .field(field.getKey().getFieldName())
                     .transformations(
                         field.getValue().stream()
                             .map(TransformedInput::getTransformationInfo)
                             .map(TransformationInfo::toInputFieldsTransformations)
-                            .collect(Collectors.toList()))
-                    .build())
+                            .collect(Collectors.toList()));
+                
+                // Add type information if available
+                String fieldType = field.getKey().getFieldType();
+                if (fieldType != null && !fieldType.isEmpty()) {
+                    builder.put("type", fieldType);
+                }
+                
+                return builder.build();
+            })
         .collect(Collectors.toList());
+  }
+
+  private String getTableName(DatasetIdentifier di) {
+    for (Symlink symlink : di.getSymlinks()) {
+      if (symlink.getType() == DatasetIdentifier.SymlinkType.TABLE) {
+        return symlink.getName();
+      }
+    }
+    return di.getName();
+  }
+
+  private String getTableNamespace(DatasetIdentifier di) {
+    for (Symlink symlink : di.getSymlinks()) {
+      if (symlink.getType() == DatasetIdentifier.SymlinkType.TABLE) {
+        return symlink.getNamespace();
+      }
+    }
+    return di.getNamespace();
   }
 
   List<TransformedInput> getInputsUsedFor(String outputName) {
@@ -340,7 +380,7 @@ public class ColumnLevelLineageBuilder {
     boolean continueSearch = true;
 
     Set<Dependency> newDependentInputs = Collections.singleton(e);
-    while (continueSearch) {
+    while (continueSearch && !Thread.currentThread().isInterrupted()) {
       newDependentInputs =
           newDependentInputs.stream()
               .filter(dependency -> exprDependencies.containsKey(dependency.getExprId()))

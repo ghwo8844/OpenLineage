@@ -10,16 +10,21 @@ import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.Ali
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.CaseWhenVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.CoalesceVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.ExpressionVisitor;
+import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.GetArrayItemVisitor;
+import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.GetMapValueVisitor;
+import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.GetStructFieldVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.IfVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.expression.WindowVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.AggregateVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.CreateTableAsSelectVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.DataSourceV2RelationVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.DistinctVisitor;
+import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.ExpandVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.FilterVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.GenerateVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.IcebergMergeIntoVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.JoinVisitor;
+import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.ObjectTransformationVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.OperatorVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.ProjectVisitor;
 import io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.SortVisitor;
@@ -42,8 +47,10 @@ class VisitorFactory {
             new SortVisitor(),
             new io.openlineage.spark3.agent.lifecycle.plan.column.visitors.operator.WindowVisitor(),
             new DataSourceV2RelationVisitor(),
+            new ExpandVisitor(),
             new UnionVisitor(),
-            new IcebergMergeIntoVisitor()));
+            new IcebergMergeIntoVisitor(),
+            new ObjectTransformationVisitor()));
   }
 
   List<ExpressionVisitor> expressionVisitors() {
@@ -54,6 +61,9 @@ class VisitorFactory {
             new IfVisitor(),
             new CoalesceVisitor(),
             new AggregateExpressionVisitor(),
-            new WindowVisitor()));
+            new WindowVisitor(),
+            new GetMapValueVisitor(),
+            new GetStructFieldVisitor(),
+            new GetArrayItemVisitor()));
   }
 }

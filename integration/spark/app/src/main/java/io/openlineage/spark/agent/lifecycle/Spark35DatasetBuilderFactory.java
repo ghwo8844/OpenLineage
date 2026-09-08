@@ -11,6 +11,7 @@ import io.openlineage.client.OpenLineage;
 import io.openlineage.client.OpenLineage.InputDataset;
 import io.openlineage.spark.agent.lifecycle.plan.CommandPlanVisitor;
 import io.openlineage.spark.agent.lifecycle.plan.SaveIntoDataSourceCommandVisitor;
+import io.openlineage.spark.agent.lifecycle.plan.ViewInputDatasetBuilder;
 import io.openlineage.spark.agent.lifecycle.plan.column.ColumnLevelLineageVisitor;
 import io.openlineage.spark.agent.util.DeltaUtils;
 import io.openlineage.spark.api.DatasetFactory;
@@ -18,6 +19,8 @@ import io.openlineage.spark.api.OpenLineageContext;
 import io.openlineage.spark3.agent.lifecycle.plan.AppendDataDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.CopyIntoCommandInputDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.CopyIntoCommandOutputDatasetBuilder;
+import io.openlineage.spark3.agent.lifecycle.plan.CreateViewDatasetBuilder;
+import io.openlineage.spark3.agent.lifecycle.plan.CreateViewInputDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.DataSourceV2RelationInputOnEndDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.DataSourceV2RelationInputOnStartDatasetBuilder;
 import io.openlineage.spark3.agent.lifecycle.plan.DataSourceV2RelationOutputDatasetBuilder;
@@ -67,6 +70,8 @@ public class Spark35DatasetBuilderFactory extends Spark32DatasetBuilderFactory
             .add(new DataSourceV2ScanRelationOnStartInputDatasetBuilder(context, datasetFactory))
             .add(new DataSourceV2ScanRelationOnEndInputDatasetBuilder(context, datasetFactory))
             .add(new SubqueryAliasInputDatasetBuilder(context))
+            .add(new ViewInputDatasetBuilder(context))
+            .add(new CreateViewInputDatasetBuilder(context))
             .add(new CreateReplaceInputDatasetBuilder(context))
             .add(new DeleteCommandInputDatasetBuilder(context))
             .add(new UpdateCommandInputDatasetBuilder(context))
@@ -103,7 +108,8 @@ public class Spark35DatasetBuilderFactory extends Spark32DatasetBuilderFactory
             .add(new DropTableDatasetBuilder(context))
             .add(new MergeIntoCommandEdgeOutputDatasetBuilder(context))
             .add(new AlterTableCommandDatasetBuilder(context))
-            .add(new WriteToMicroBatchDataSourceV1DatasetBuilder(context, datasetFactory));
+            .add(new WriteToMicroBatchDataSourceV1DatasetBuilder(context, datasetFactory))
+            .add(new CreateViewDatasetBuilder(context));
 
     if (ReplaceIcebergDataDatasetBuilder.hasClasses()) {
       builder.add(new ReplaceIcebergDataDatasetBuilder(context));

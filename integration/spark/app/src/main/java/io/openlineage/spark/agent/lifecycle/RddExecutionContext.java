@@ -169,6 +169,10 @@ class RddExecutionContext implements ExecutionContext {
   }
 
   static String nameRDD(RDD<?> rdd) {
+    return nameRDD(rdd, new HashSet<>());
+  }
+
+  private static String nameRDD(RDD<?> rdd, Set<Integer> visited) {
     String rddName = (String) rdd.name();
     if (rddName == null
 
@@ -191,6 +195,11 @@ class RddExecutionContext implements ExecutionContext {
               .replaceAll(CAMEL_TO_SNAKE_CASE, "_$1") // camel case to snake case
               .toLowerCase(Locale.ROOT);
     }
+
+    if (!visited.add(rdd.id())) {
+      return rddName;
+    }
+
     Seq<Dependency<?>> deps = (Seq<Dependency<?>>) rdd.dependencies();
     List<Dependency<?>> dependencies = ScalaConversionUtils.fromSeq(deps);
     if (dependencies.isEmpty()) {
@@ -198,7 +207,7 @@ class RddExecutionContext implements ExecutionContext {
     }
     List<String> dependencyNames = new ArrayList<>();
     for (Dependency d : dependencies) {
-      dependencyNames.add(nameRDD(d.rdd()));
+      dependencyNames.add(nameRDD(d.rdd(), visited));
     }
     String dependencyName = Strings.join(dependencyNames, "_");
     if (dependencyName != null && dependencyName.length() > MAX_JOB_NAME_LENGTH) {

@@ -4,10 +4,10 @@
 */
 package io.openlineage.spark.agent.lifecycle;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.openlineage.spark.shaded.com.fasterxml.jackson.annotation.JsonCreator;
+import io.openlineage.spark.shaded.com.fasterxml.jackson.annotation.JsonProperty;
+import io.openlineage.spark.shaded.com.fasterxml.jackson.core.type.TypeReference;
+import io.openlineage.spark.shaded.com.fasterxml.jackson.databind.ObjectMapper;
 import io.openlineage.client.OpenLineage;
 import io.openlineage.client.OpenLineage.InputDataset;
 import io.openlineage.client.OpenLineageClientUtils;
@@ -20,6 +20,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -231,6 +233,7 @@ public final class SparkOpenLineageExtensionVisitorWrapper {
         Thread.getAllStackTraces().keySet().stream()
             .map(Thread::getContextClassLoader)
             .filter(Objects::nonNull)
+            .filter(cl -> !hasS3JarsInClasspath(cl))
             .collect(Collectors.toList());
 
     // Mutates the state of available classloader(s)
@@ -343,6 +346,56 @@ public final class SparkOpenLineageExtensionVisitorWrapper {
     Class<?> loadedClass = Class.forName(className);
     Object classInstance = loadedClass.newInstance();
     return classInstance;
+  }
+
+  /**
+   * Checks if the given classloader has S3 JARs in its classpath. This prevents ServiceLoader from
+   * attempting to scan dynamically added S3 JARs (e.g., from ADD JAR s3://... commands) which can
+   * cause deadlocks during classloading.
+   *
+   * @param classLoader the classloader to inspect
+   * @return true if the classloader contains S3 JARs, false otherwise
+   */
+  private static boolean hasS3JarsInClasspath(ClassLoader classLoader) {
+    try {
+      if (classLoader instanceof URLClassLoader) {
+        URL[] urls = ((URLClassLoader) classLoader).getURLs();
+        for (URL url : urls) {
+          if (isS3Url(url)) {
+            log.debug(
+                "Skipping classloader with S3 JAR to avoid deadlock: {} (contains: {})",
+                classLoader, url);
+            return true;
+          }
+        }
+      }
+    } catch (Exception e) {
+      log.trace("Could not inspect classloader URLs for {}", classLoader, e);
+    }
+    return false;
+  }
+
+  /**
+   * Checks if the given URL is an S3 URL (s3://, s3n://, s3a://, etc.).
+   * Uses protocol check to catch all S3 variants and avoid deadlocks with
+   * AWS SDK HTTP connection pool.
+   *
+   * @param url the URL to check
+   * @return true if the URL uses an S3 protocol, false otherwise
+   */
+  private static boolean isS3Url(URL url) {
+    String protocol = url.getProtocol();
+    if (protocol != null && protocol.toLowerCase().startsWith("s3")) {
+      return true;
+    }
+    // Handle jar:s3*:// wrapped URLs
+    if ("jar".equals(protocol)) {
+      String path = url.getPath();
+      if (path != null && path.toLowerCase().startsWith("s3")) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @SuppressWarnings("PMD") // always point locally

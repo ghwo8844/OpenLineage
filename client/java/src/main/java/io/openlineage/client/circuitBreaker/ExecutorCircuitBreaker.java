@@ -13,6 +13,9 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
@@ -21,6 +24,9 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
   private Integer circuitCheckIntervalInMillis;
   protected Optional<Duration> timeout;
   private ExecutorService executor;
+
+  private final AtomicReference<CircuitBreakerState> currentEngagement = new AtomicReference<>();
+  private volatile Consumer<CircuitBreakerState> onTripListener = state -> {};
 
   public ExecutorCircuitBreaker(Integer circuitCheckIntervalInMillis) {
     this.circuitCheckIntervalInMillis = circuitCheckIntervalInMillis;
@@ -36,7 +42,7 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
 
   @Override
   public <T> T run(Callable<T> callable) {
-    if (currentState().isClosed()) {
+    if (observe(currentState()).isClosed()) {
       log.warn("CircuitBreaker closed preventing callable to be run: {}", this);
       return null;
     }
@@ -50,11 +56,11 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
                   "Starting CircuitBreaker in background {} with interval {}",
                   this,
                   getCheckIntervalMillis());
-              CircuitBreakerState circuitBreakerState = currentState();
+              CircuitBreakerState circuitBreakerState = observe(currentState());
               boolean isTimeoutExceeded = false;
               while (!circuitBreakerState.isClosed() && !isTimeoutExceeded) {
                 Thread.sleep(getCheckIntervalMillis());
-                circuitBreakerState = currentState();
+                circuitBreakerState = observe(currentState());
 
                 Duration runningTime = Duration.ofMillis(System.currentTimeMillis() - startTime);
                 isTimeoutExceeded =
@@ -92,7 +98,18 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
 
   @Override
   public void close() {
-    log.info("No-op close");
+    log.info("Shutting down ExecutorCircuitBreaker executor");
+    executor.shutdown();
+    try {
+      if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+        log.warn("Executor did not terminate within 30s, forcing shutdown");
+        executor.shutdownNow();
+      }
+    } catch (InterruptedException e) {
+      log.warn("Interrupted while awaiting executor termination, forcing shutdown");
+      executor.shutdownNow();
+      Thread.currentThread().interrupt();
+    }
   }
 
   public Optional<Duration> getTimeout() {
@@ -101,5 +118,27 @@ public abstract class ExecutorCircuitBreaker implements CircuitBreaker {
 
   protected boolean isPercentageValueValid(Integer value) {
     return value != null && (value >= 0) && (value <= 100);
+  }
+
+  @Override
+  public void setOnTripListener(Consumer<CircuitBreakerState> listener) {
+    if (listener != null) {
+      this.onTripListener = listener;
+    }
+  }
+
+  private CircuitBreakerState observe(CircuitBreakerState state) {
+    if (state.isClosed()) {
+      if (currentEngagement.compareAndSet(null, state)) {
+        try {
+          onTripListener.accept(state);
+        } catch (Exception e) {
+          log.warn("Circuit breaker trip listener failed", e);
+        }
+      }
+    } else {
+      currentEngagement.set(null);
+    }
+    return state;
   }
 }

@@ -264,6 +264,28 @@ class DatasetReducerTest {
         .build();
   }
 
+  @Test
+  void testReduceInputsWithNullFacets() {
+    inputs.clear();
+    inputs.add(
+        openLineage
+            .newInputDatasetBuilder()
+            .name("/tmp/some/tested-path/20250721")
+            .namespace("namespace")
+            .build()); // no .facets() — getFacets() returns null
+
+    inputs.add(
+        openLineage
+            .newInputDatasetBuilder()
+            .name("/tmp/some/tested-path/20250722")
+            .namespace("namespace")
+            .build());
+
+    // Before fix: NPE at ReducedDataset.hasSameFacets:89
+    List<InputDataset> reduceInputs = reducer.reduceInputs(inputs);
+    assertThat(reduceInputs).isNotEmpty();
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"some_table_20250923", "20250722T0901Z", "202504"})
   void testDatasetsWhichShouldNotBeTrimmed(String datasetName) {
